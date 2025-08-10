@@ -1,10 +1,5 @@
-numpy==2.3.2
-pandas==2.3.1
-python-dateutil==2.9.0.post0
-pytz==2025.2
-setuptools==80.9.0
-six==1.17.0
-## !! Could not determine repository location
--e /Users/cw/Python/stockdata
-tzdata==2025.2
-wheel==0.45.1
+yfinance>=0.2.61
+yahooquery>=2.3.7
+sqlalchemy>=2.0.23
+pandas>=2.1.4
+requests>=2.31.0
