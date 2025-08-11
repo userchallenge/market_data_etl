@@ -220,6 +220,13 @@ print(f"Log level: {config.log_level}")
 
 ## 🗄 Database Schema
 
+### Single Database Architecture
+**Critical Design Principle**: The entire application uses a **single database file** (`market_data.db`):
+- **Unified Data Model**: All data types (prices, fundamentals, economic data) in one database
+- **Consistent Relationships**: All entities properly linked through foreign keys
+- **Single Point of Truth**: No data fragmentation across multiple database files
+- **Simplified Backup**: One file contains all your market data
+
 ### SQLite + SQLAlchemy Design
 **Why SQLite?** Perfect for single-user, local market data collection:
 - **Zero Configuration**: No database server setup required
@@ -227,19 +234,32 @@ print(f"Log level: {config.log_level}")
 - **ACID Compliant**: Ensures data integrity during concurrent operations
 - **Minimal Operations**: Automatic schema creation and management
 
-### Tables
+### Unified Database Schema
 
-#### `tickers`
+The database uses a comprehensive, normalized schema designed to handle all types of market and economic data efficiently:
+
+#### Core Entity: `companies`
+Central table linking all data types:
 ```sql
-id          INTEGER PRIMARY KEY
-symbol      VARCHAR(20) UNIQUE NOT NULL
-created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+id              INTEGER PRIMARY KEY
+ticker_symbol   VARCHAR(20) UNIQUE NOT NULL
+isin           VARCHAR(12) UNIQUE
+company_name   VARCHAR(200)
+instrument_type ENUM(stock, fund, etf)
+sector         VARCHAR(100)
+industry       VARCHAR(100)
+country        VARCHAR(100)
+currency       VARCHAR(10) NOT NULL
+market_cap     FLOAT
+created_at     DATETIME DEFAULT CURRENT_TIMESTAMP
+updated_at     DATETIME DEFAULT CURRENT_TIMESTAMP
 ```
 
-#### `prices`
+#### Market Data Tables
+**`prices`** - Daily OHLC price data
 ```sql
 id          INTEGER PRIMARY KEY
-ticker_id   INTEGER FOREIGN KEY -> tickers.id
+company_id  INTEGER FOREIGN KEY -> companies.id
 date        DATE NOT NULL
 open        FLOAT
 high        FLOAT
@@ -250,22 +270,72 @@ volume      INTEGER
 created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
 ```
 
-#### `fundamentals`
+**`income_statements`** - Comprehensive P&L data
 ```sql
-id             INTEGER PRIMARY KEY
-ticker_id      INTEGER FOREIGN KEY -> tickers.id
-module_name    VARCHAR(100) NOT NULL
-report_date    DATE
-period_type    VARCHAR(20)
-revenue        FLOAT
-net_income     FLOAT
-total_assets   FLOAT
-total_debt     FLOAT
-market_cap     FLOAT
-data_snapshot  JSON
-created_at     DATETIME DEFAULT CURRENT_TIMESTAMP
-updated_at     DATETIME DEFAULT CURRENT_TIMESTAMP
+id               INTEGER PRIMARY KEY
+company_id       INTEGER FOREIGN KEY -> companies.id
+period_end_date  DATE NOT NULL
+period_type      VARCHAR(20) -- 'annual', 'quarterly'
+fiscal_year      INTEGER
+total_revenue    FLOAT
+net_income       FLOAT
+operating_income FLOAT
+-- ... 30+ financial metrics
+created_at       DATETIME DEFAULT CURRENT_TIMESTAMP
 ```
+
+**`balance_sheets`** - Financial position data
+```sql
+id                    INTEGER PRIMARY KEY  
+company_id            INTEGER FOREIGN KEY -> companies.id
+period_end_date       DATE NOT NULL
+total_assets          FLOAT
+total_liabilities     FLOAT
+shareholders_equity   FLOAT
+cash_and_equivalents  FLOAT
+-- ... 25+ balance sheet items
+created_at            DATETIME DEFAULT CURRENT_TIMESTAMP
+```
+
+**`cash_flows`** - Cash flow statement data
+```sql
+id                  INTEGER PRIMARY KEY
+company_id          INTEGER FOREIGN KEY -> companies.id
+period_end_date     DATE NOT NULL
+operating_cash_flow FLOAT
+investing_cash_flow FLOAT
+financing_cash_flow FLOAT
+free_cash_flow      FLOAT
+-- ... 20+ cash flow metrics
+created_at          DATETIME DEFAULT CURRENT_TIMESTAMP
+```
+
+#### Portfolio Management Tables
+**`portfolios`** - Portfolio definitions
+```sql
+id           INTEGER PRIMARY KEY
+name         VARCHAR(100) UNIQUE NOT NULL
+description  TEXT
+currency     VARCHAR(10) NOT NULL
+created_date DATE NOT NULL
+created_at   DATETIME DEFAULT CURRENT_TIMESTAMP
+```
+
+**`transactions`** - Buy/sell transaction records
+```sql
+id               INTEGER PRIMARY KEY
+portfolio_id     INTEGER FOREIGN KEY -> portfolios.id
+company_id       INTEGER FOREIGN KEY -> companies.id
+transaction_date DATE NOT NULL
+transaction_type ENUM(buy, sell, dividend, split)
+quantity         FLOAT NOT NULL
+price_per_unit   FLOAT NOT NULL
+total_amount     FLOAT
+created_at       DATETIME DEFAULT CURRENT_TIMESTAMP
+```
+
+#### Extensible Design
+The schema is designed to easily accommodate additional data types (economic indicators, crypto, alternatives) while maintaining referential integrity and consistent patterns.
 
 ## 🔧 Advanced Usage
 
@@ -335,31 +405,76 @@ Ticker INVALID not found or has no data
 ERROR: Invalid date format: 2024-13-01. Expected YYYY-MM-DD format.
 ```
 
-## 🏗 Package Structure
+## 🏗 Package Architecture
 
+### Clean Architecture Principles
+The package follows a **clean architecture** with strict separation of concerns:
+
+#### `data/` - Data Layer
+- **Purpose**: Data models, business logic, domain expertise
+- **Contains**: Database models, API fetchers, standardization logic
+- **Responsibility**: Defines WHAT data looks like and HOW to get it
+- **Key Files**:
+  - `models.py` - SQLAlchemy database schema
+  - `fetchers.py` - Base classes for API communication
+  - `financial_fetcher.py` - Yahoo Finance API logic
+  - `financial_standardizer.py` - Business rules for data normalization
+
+#### `etl/` - Processing Pipeline
+- **Purpose**: Pure Extract-Transform-Load operations
+- **Contains**: Data movement and processing logic
+- **Responsibility**: Defines HOW to move data through the system
+- **Key Files**:
+  - `extract.py` - Pure data extraction (no transformation)
+  - `transform.py` - Pure data transformation (no extraction/loading)
+  - `load.py` - Pure data loading + ETL orchestration
+
+#### `database/` - Persistence Layer
+- **Purpose**: Unified database operations
+- **Contains**: Single DatabaseManager for all data types
+- **Responsibility**: All database interactions, session management
+- **Key Files**:
+  - `manager.py` - Unified database operations for all data types
+
+#### `utils/` - Cross-Cutting Concerns
+- **Purpose**: Shared utilities and infrastructure
+- **Contains**: Logging, validation, exceptions, configuration
+- **Responsibility**: Common functionality used across layers
+
+### Directory Structure
 ```
 market-data-etl/
-├── README.md                           # This file
+├── README.md                           # Updated with each implementation
+├── CLAUDE.md                           # Implementation guidelines
 ├── setup.py                            # Package installation
 ├── requirements.txt                    # Dependencies
+├── market_data.db                      # Single database file (SQLite)
 ├── market_data_etl/                    # Main package
 │   ├── __init__.py                     # Package initialization
 │   ├── config.py                       # Configuration management
-│   ├── data/                           # Data fetching and models
+│   ├── data/                           # Data layer - business logic
 │   │   ├── __init__.py
-│   │   ├── fetchers.py                 # Yahoo Finance API clients
-│   │   └── models.py                   # SQLAlchemy database models
-│   ├── database/                       # Database operations
+│   │   ├── fetchers.py                 # Base API communication classes
+│   │   ├── financial_fetcher.py        # Yahoo Finance specific logic
+│   │   ├── financial_standardizer.py  # Financial data normalization
+│   │   └── models.py                   # Unified SQLAlchemy models
+│   ├── etl/                           # ETL pipeline - data processing
 │   │   ├── __init__.py
-│   │   └── manager.py                  # Database management
+│   │   ├── extract.py                  # Pure extraction (financial/price data)
+│   │   ├── transform.py                # Pure transformation
+│   │   └── load.py                     # Loading + orchestration
+│   ├── database/                       # Persistence layer
+│   │   ├── __init__.py
+│   │   └── manager.py                  # Unified database operations
 │   ├── cli/                            # Command-line interface
 │   │   ├── __init__.py
 │   │   ├── commands.py                 # CLI command implementations
 │   │   └── main.py                     # CLI entry point
-│   └── utils/                          # Utilities
+│   └── utils/                          # Cross-cutting concerns
 │       ├── __init__.py
 │       ├── exceptions.py               # Custom exceptions
-│       └── logging.py                  # Logging configuration
+│       ├── logging.py                  # Logging configuration
+│       └── validation.py               # Input validation utilities
 ├── tests/                              # Test suite
 │   ├── __init__.py
 │   ├── test_fetchers.py
@@ -371,6 +486,14 @@ market-data-etl/
 └── docs/                               # Documentation
     └── API.md
 ```
+
+### Extensibility
+This architecture makes it easy to add new data types (economic indicators, cryptocurrency, alternative data) by:
+- Adding models to the same `models.py` file
+- Creating new fetchers that inherit from base classes
+- Following the same ETL patterns for new data types
+- Extending the unified `DatabaseManager`
+- Maintaining the single database principle
 
 ## 🧪 Testing
 
@@ -458,14 +581,23 @@ All data is properly structured and stored in SQLite for efficient querying and 
 
 ## 🔄 Updates & Maintenance
 
-This README is continuously updated to reflect the current state of the package. Key areas that are kept current:
+This README is **continuously updated** to reflect the current state of the package. Key areas that are kept current:
 
 - **API Changes**: Yahoo Finance API updates and compatibility
 - **Feature Additions**: New functionality and capabilities
+- **Database Schema**: Updated table structures and relationships
+- **Architecture Changes**: New patterns and implementation guidelines
 - **Configuration Options**: New environment variables and settings
 - **Error Handling**: Updated error messages and troubleshooting
 - **Examples**: Current, working code examples
 - **Dependencies**: Package version requirements
+
+### Implementation Guidelines
+For developers extending this package, see [`CLAUDE.md`](CLAUDE.md) for comprehensive implementation guidelines including:
+- **Single Database Principle**: Mandatory use of single database file
+- **Architecture Patterns**: Consistent ETL and data layer patterns
+- **Code Quality Standards**: Type hints, error handling, logging
+- **Extension Checklist**: Requirements for adding new data types
 
 ## 🤝 Contributing
 
