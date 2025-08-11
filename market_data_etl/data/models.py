@@ -10,26 +10,46 @@ This module defines the database schema for storing:
 Designed for comprehensive financial analysis of global companies.
 """
 
-from sqlalchemy import Column, Integer, String, Float, Date, DateTime, ForeignKey, Index
+from sqlalchemy import Column, Integer, String, Float, Date, DateTime, ForeignKey, Index, Text, Enum
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from datetime import datetime
+import enum
 
 Base = declarative_base()
 
 
+class InstrumentType(enum.Enum):
+    """Enumeration for different types of financial instruments."""
+    STOCK = "stock"
+    FUND = "fund" 
+    ETF = "etf"
+
+
+class TransactionType(enum.Enum):
+    """Enumeration for different transaction types."""
+    BUY = "buy"
+    SELL = "sell"
+    DIVIDEND = "dividend"
+    SPLIT = "split"
+    SPINOFF = "spinoff"
+    MERGER = "merger"
+
+
 class Company(Base):
     """
-    Company information with currency and basic details.
+    Company/Instrument information with currency and basic details.
     
-    Stores essential company information needed for financial analysis
-    including the base currency for all financial statements.
+    Stores essential information for stocks, funds, and ETFs needed for 
+    financial analysis including the base currency for all financial statements.
     """
     __tablename__ = 'companies'
     
     id = Column(Integer, primary_key=True)
     ticker_symbol = Column(String(20), unique=True, nullable=False, index=True)
+    isin = Column(String(12), unique=True, nullable=True, index=True)  # International Securities Identification Number
     company_name = Column(String(200))
+    instrument_type = Column(Enum(InstrumentType), nullable=False, default=InstrumentType.STOCK)
     sector = Column(String(100))
     industry = Column(String(100))
     country = Column(String(100))
@@ -37,6 +57,7 @@ class Company(Base):
     market_cap = Column(Float)  # In base currency
     employees = Column(Integer)
     founded_year = Column(Integer)
+    fund_type = Column(String(50))  # For funds/ETFs: equity, bond, mixed, etc.
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
@@ -46,6 +67,8 @@ class Company(Base):
     balance_sheets = relationship("BalanceSheet", back_populates="company")
     cash_flows = relationship("CashFlow", back_populates="company")
     financial_ratios = relationship("FinancialRatio", back_populates="company")
+    portfolio_holdings = relationship("PortfolioHolding", back_populates="company")
+    transactions = relationship("Transaction", back_populates="company")
 
 
 class Price(Base):
@@ -356,5 +379,98 @@ class FinancialRatio(Base):
     # Indexes
     __table_args__ = (
         Index('ix_ratios_company_period', 'company_id', 'period_end_date', 'period_type'),
+        {'sqlite_autoincrement': True}
+    )
+
+
+class Portfolio(Base):
+    """
+    Portfolio definition containing metadata and settings.
+    
+    Stores portfolio information loaded from configuration files
+    including name, description, and creation metadata.
+    """
+    __tablename__ = 'portfolios'
+    
+    id = Column(Integer, primary_key=True)
+    name = Column(String(100), unique=True, nullable=False, index=True)
+    description = Column(Text)
+    currency = Column(String(10), nullable=False)  # Base currency for portfolio
+    created_date = Column(Date, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Relationships
+    holdings = relationship("PortfolioHolding", back_populates="portfolio")
+    transactions = relationship("Transaction", back_populates="portfolio")
+
+
+class PortfolioHolding(Base):
+    """
+    Individual holdings within a portfolio.
+    
+    Links companies/instruments to portfolios with additional metadata
+    from the portfolio configuration file.
+    """
+    __tablename__ = 'portfolio_holdings'
+    
+    id = Column(Integer, primary_key=True)
+    portfolio_id = Column(Integer, ForeignKey('portfolios.id'), nullable=False)
+    company_id = Column(Integer, ForeignKey('companies.id'), nullable=False)
+    sector = Column(String(100))  # Can override company sector for portfolio-specific categorization
+    fund_type = Column(String(50))  # For funds: equity, bond, mixed, etc.
+    notes = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    # Relationships
+    portfolio = relationship("Portfolio", back_populates="holdings")
+    company = relationship("Company", back_populates="portfolio_holdings")
+    
+    # Indexes
+    __table_args__ = (
+        Index('ix_holdings_portfolio_company', 'portfolio_id', 'company_id', unique=True),
+        {'sqlite_autoincrement': True}
+    )
+
+
+class Transaction(Base):
+    """
+    Individual transactions for portfolio tracking.
+    
+    Stores buy, sell, dividend, and other transactions with full details
+    for portfolio performance calculation and tax reporting.
+    """
+    __tablename__ = 'transactions'
+    
+    id = Column(Integer, primary_key=True)
+    portfolio_id = Column(Integer, ForeignKey('portfolios.id'), nullable=True)  # Can be NULL for unassigned transactions
+    company_id = Column(Integer, ForeignKey('companies.id'), nullable=False)
+    transaction_date = Column(Date, nullable=False, index=True)
+    transaction_type = Column(Enum(TransactionType), nullable=False, index=True)
+    
+    # Transaction Details
+    quantity = Column(Float, nullable=False)  # Number of shares/units
+    price_per_unit = Column(Float, nullable=False)  # Price per share/unit
+    currency = Column(String(10), nullable=False)  # Transaction currency
+    fees = Column(Float, default=0.0)  # Brokerage fees and commissions
+    
+    # Additional Information
+    broker = Column(String(100))  # Broker name
+    notes = Column(Text)  # Additional notes
+    
+    # Calculated Fields
+    total_amount = Column(Float)  # quantity * price_per_unit + fees (for buys) or - fees (for sells)
+    
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    # Relationships
+    portfolio = relationship("Portfolio", back_populates="transactions")
+    company = relationship("Company", back_populates="transactions")
+    
+    # Indexes
+    __table_args__ = (
+        Index('ix_transactions_portfolio_date', 'portfolio_id', 'transaction_date'),
+        Index('ix_transactions_company_date', 'company_id', 'transaction_date'),
+        Index('ix_transactions_type_date', 'transaction_type', 'transaction_date'),
         {'sqlite_autoincrement': True}
     )

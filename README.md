@@ -62,6 +62,9 @@ market-data-etl fetch-fundamentals --ticker MSFT
 # Check what data exists for a Swedish stock
 market-data-etl db-info --ticker VOLV-B.ST
 
+# Clear database for development/testing
+market-data-etl clear-database --ticker AAPL
+
 # Enable verbose logging
 market-data-etl fetch-prices --ticker GOOGL --from 2024-01-01 --verbose
 ```
@@ -154,6 +157,35 @@ Fundamental modules (8):
   - financial_data
   - income_statement
   - key_stats
+```
+
+### `clear-database`
+Clear database data for development and testing purposes.
+
+```bash
+# Clear data for specific ticker
+market-data-etl clear-database --ticker TICKER
+
+# Clear all data from database
+market-data-etl clear-database --all
+
+# Skip confirmation prompt (useful for scripts)
+market-data-etl clear-database --all --confirm
+```
+
+**Features:**
+- Safety confirmation prompts before deletion
+- Selective ticker clearing for targeted testing
+- Complete database reset for fresh starts
+- Confirmation bypass for automated scripts
+- Comprehensive data removal (prices, financials, company info)
+
+**Example Output:**
+```
+⚠️  WARNING: This will permanently delete all data for ticker AAPL!
+Are you sure you want to continue? (yes/no): yes
+Clearing all data for ticker AAPL...
+✅ Successfully cleared all data for AAPL
 ```
 
 ## ⚙️ Configuration

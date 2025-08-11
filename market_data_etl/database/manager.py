@@ -20,7 +20,10 @@ from ..config import config
 from ..utils.logging import get_logger
 from ..utils.exceptions import DatabaseError
 from ..utils.validation import validate_ticker, sanitize_sql_input, validate_currency_code
-from ..data.models import Base, Company, Price, IncomeStatement, BalanceSheet, CashFlow, FinancialRatio
+from ..data.models import (
+    Base, Company, Price, IncomeStatement, BalanceSheet, CashFlow, FinancialRatio,
+    Portfolio, PortfolioHolding, Transaction, InstrumentType, TransactionType
+)
 
 
 # Constants
@@ -71,7 +74,9 @@ class DatabaseManager:
         self,
         ticker: str,
         currency: str = 'USD',
-        company_info: Optional[Dict[str, Any]] = None
+        company_info: Optional[Dict[str, Any]] = None,
+        isin: Optional[str] = None,
+        instrument_type: InstrumentType = InstrumentType.STOCK
     ) -> Company:
         """
         Get existing company record or create new one.
@@ -80,6 +85,8 @@ class DatabaseManager:
             ticker: Stock ticker symbol
             currency: Currency code
             company_info: Optional company information dictionary
+            isin: Optional ISIN code
+            instrument_type: Type of instrument (stock, fund, etf)
             
         Returns:
             Company database record
@@ -89,15 +96,18 @@ class DatabaseManager:
         currency = validate_currency_code(currency)
         
         with self.get_session() as session:
-            # Try to find existing company
+            # Try to find existing company by ticker or ISIN
             company = session.query(Company).filter(
-                Company.ticker_symbol == ticker
+                (Company.ticker_symbol == ticker) | 
+                (Company.isin == isin) if isin else (Company.ticker_symbol == ticker)
             ).first()
             
             if company:
                 # Update company information if provided
                 if company_info:
                     company.company_name = company_info.get('company_name') or company.company_name
+                    company.isin = isin or company.isin
+                    company.instrument_type = instrument_type
                     company.sector = company_info.get('sector') or company.sector
                     company.industry = company_info.get('industry') or company.industry
                     company.country = company_info.get('country') or company.country
@@ -113,6 +123,8 @@ class DatabaseManager:
                 info = company_info or {}
                 company = Company(
                     ticker_symbol=ticker,
+                    isin=isin,
+                    instrument_type=instrument_type,
                     company_name=info.get('company_name', ''),
                     sector=info.get('sector', ''),
                     industry=info.get('industry', ''),
@@ -120,7 +132,8 @@ class DatabaseManager:
                     currency=currency,
                     market_cap=info.get('market_cap'),
                     employees=info.get('employees'),
-                    founded_year=info.get('founded_year')
+                    founded_year=info.get('founded_year'),
+                    fund_type=info.get('fund_type')
                 )
                 session.add(company)
                 session.commit()
@@ -955,3 +968,335 @@ class DatabaseManager:
                     'financial_ratios': ratios_count
                 }
             }
+    
+    # =============================================================================
+    # DATABASE CLEARING METHODS (for development/testing)
+    # =============================================================================
+    
+    def clear_ticker_data(self, ticker: str) -> bool:
+        """
+        Clear all data for a specific ticker (for development/testing).
+        
+        Args:
+            ticker: Stock ticker symbol
+            
+        Returns:
+            True if data was cleared, False if no data found
+        """
+        try:
+            ticker = validate_ticker(ticker)
+            
+            with self.get_session() as session:
+                # Find the company
+                company = session.query(Company).filter(
+                    Company.ticker_symbol == ticker
+                ).first()
+                
+                if not company:
+                    return False
+                
+                # Delete all related data
+                session.query(Price).filter(Price.company_id == company.id).delete()
+                session.query(IncomeStatement).filter(IncomeStatement.company_id == company.id).delete()
+                session.query(BalanceSheet).filter(BalanceSheet.company_id == company.id).delete()
+                session.query(CashFlow).filter(CashFlow.company_id == company.id).delete()
+                session.query(FinancialRatio).filter(FinancialRatio.company_id == company.id).delete()
+                
+                # Delete the company record
+                session.delete(company)
+                
+                session.commit()
+                self.logger.info(f"Cleared all data for ticker {ticker}")
+                return True
+                
+        except Exception as e:
+            self.logger.error(f"Error clearing data for ticker {ticker}: {e}", exc_info=True)
+            raise DatabaseError(f"Failed to clear data for ticker {ticker}") from e
+    
+    def clear_all_data(self) -> bool:
+        """
+        Clear all data from the database (for development/testing).
+        
+        Returns:
+            True if data was cleared successfully
+        """
+        try:
+            with self.get_session() as session:
+                # Delete all data from all tables
+                session.query(Price).delete()
+                session.query(IncomeStatement).delete()
+                session.query(BalanceSheet).delete()
+                session.query(CashFlow).delete()
+                session.query(FinancialRatio).delete()
+                session.query(Company).delete()
+                
+                session.commit()
+                self.logger.info("Cleared all data from database")
+                return True
+                
+        except Exception as e:
+            self.logger.error(f"Error clearing all database data: {e}", exc_info=True)
+            raise DatabaseError("Failed to clear all database data") from e
+    
+    # =============================================================================
+    # PORTFOLIO MANAGEMENT METHODS
+    # =============================================================================
+    
+    def load_portfolio_from_config(self, portfolio_config: Dict[str, Any]) -> Portfolio:
+        """
+        Load or update portfolio from configuration dictionary.
+        
+        Args:
+            portfolio_config: Portfolio configuration dictionary
+            
+        Returns:
+            Portfolio database record
+        """
+        try:
+            from datetime import datetime
+            
+            with self.get_session() as session:
+                # Try to find existing portfolio
+                portfolio = session.query(Portfolio).filter(
+                    Portfolio.name == portfolio_config['name']
+                ).first()
+                
+                if portfolio:
+                    # Update existing portfolio
+                    portfolio.description = portfolio_config.get('description', portfolio.description)
+                    portfolio.currency = portfolio_config.get('currency', portfolio.currency)
+                    portfolio.updated_at = datetime.utcnow()
+                    self.logger.debug(f"Updated existing portfolio: {portfolio.name}")
+                else:
+                    # Create new portfolio
+                    created_date = datetime.strptime(
+                        portfolio_config['created_date'], 
+                        '%Y-%m-%d'
+                    ).date()
+                    
+                    portfolio = Portfolio(
+                        name=portfolio_config['name'],
+                        description=portfolio_config.get('description', ''),
+                        currency=portfolio_config['currency'],
+                        created_date=created_date
+                    )
+                    session.add(portfolio)
+                    self.logger.debug(f"Created new portfolio: {portfolio.name}")
+                
+                # Process holdings
+                self._update_portfolio_holdings(session, portfolio, portfolio_config.get('holdings', {}))
+                
+                session.commit()
+                session.refresh(portfolio)
+                return portfolio
+                
+        except Exception as e:
+            self.logger.error(f"Error loading portfolio config: {e}", exc_info=True)
+            raise DatabaseError(f"Failed to load portfolio from config") from e
+    
+    def _update_portfolio_holdings(self, session: Session, portfolio: Portfolio, holdings_config: Dict[str, Any]):
+        """Update portfolio holdings from configuration."""
+        # Clear existing holdings
+        session.query(PortfolioHolding).filter(
+            PortfolioHolding.portfolio_id == portfolio.id
+        ).delete()
+        
+        # Add new holdings
+        for ticker, holding_info in holdings_config.items():
+            # Create or get company
+            isin = holding_info.get('isin')
+            yahoo_ticker = holding_info.get('yahoo_ticker')
+            instrument_type_str = holding_info.get('type', 'stock')
+            
+            # Map string to enum
+            if instrument_type_str == 'fund':
+                instrument_type = InstrumentType.FUND
+            elif instrument_type_str == 'etf':
+                instrument_type = InstrumentType.ETF
+            else:
+                instrument_type = InstrumentType.STOCK
+            
+            # Use yahoo_ticker if available, otherwise use the key (ticker)
+            effective_ticker = yahoo_ticker if yahoo_ticker else ticker
+            
+            company_info = {
+                'company_name': holding_info.get('name', ''),
+                'sector': holding_info.get('sector', ''),
+                'country': holding_info.get('country', ''),
+                'fund_type': holding_info.get('fund_type', '')
+            }
+            
+            # Find or create company within this session
+            company = session.query(Company).filter(
+                (Company.ticker_symbol == effective_ticker) | 
+                (Company.isin == isin) if isin else (Company.ticker_symbol == effective_ticker)
+            ).first()
+            
+            if not company:
+                company = Company(
+                    ticker_symbol=effective_ticker,
+                    isin=isin,
+                    instrument_type=instrument_type,
+                    company_name=company_info.get('company_name', ''),
+                    sector=company_info.get('sector', ''),
+                    industry=company_info.get('industry', ''),
+                    country=company_info.get('country', ''),
+                    currency='USD',  # Default
+                    fund_type=company_info.get('fund_type')
+                )
+                session.add(company)
+                session.flush()  # Get the ID but don't commit yet
+            
+            # Create portfolio holding
+            holding = PortfolioHolding(
+                portfolio_id=portfolio.id,
+                company_id=company.id,
+                sector=holding_info.get('sector'),
+                fund_type=holding_info.get('fund_type'),
+                notes=f"Added from portfolio config: {holding_info.get('name', '')}"
+            )
+            session.add(holding)
+    
+    def load_transactions_from_csv(self, csv_data: List[Dict[str, Any]], portfolio_name: Optional[str] = None) -> int:
+        """
+        Load transactions from CSV data.
+        
+        Args:
+            csv_data: List of transaction dictionaries from CSV
+            portfolio_name: Optional portfolio name to associate transactions with
+            
+        Returns:
+            Number of transactions loaded
+        """
+        try:
+            loaded_count = 0
+            
+            with self.get_session() as session:
+                portfolio = None
+                if portfolio_name:
+                    portfolio = session.query(Portfolio).filter(
+                        Portfolio.name == portfolio_name
+                    ).first()
+                    if not portfolio:
+                        raise DatabaseError(f"Portfolio '{portfolio_name}' not found")
+                
+                for row in csv_data:
+                    # Parse transaction data
+                    ticker = row['ticker']
+                    isin = row.get('isin')
+                    transaction_type = TransactionType(row['transaction_type'].lower())
+                    
+                    # Find or create company
+                    company = session.query(Company).filter(
+                        (Company.ticker_symbol == ticker) | 
+                        (Company.isin == isin) if isin else (Company.ticker_symbol == ticker)
+                    ).first()
+                    
+                    if not company:
+                        # Create basic company record for transaction
+                        company = Company(
+                            ticker_symbol=ticker,
+                            isin=isin,
+                            instrument_type=InstrumentType.STOCK,  # Default
+                            company_name=f"Company for {ticker}",
+                            currency=row['currency']
+                        )
+                        session.add(company)
+                        session.flush()  # Get the ID
+                    
+                    # Calculate total amount
+                    quantity = float(row['quantity'])
+                    price_per_unit = float(row['price_per_unit'])
+                    fees = float(row.get('fees', 0))
+                    
+                    if transaction_type in [TransactionType.BUY]:
+                        total_amount = (quantity * price_per_unit) + fees
+                    elif transaction_type in [TransactionType.SELL]:
+                        total_amount = (quantity * price_per_unit) - fees
+                    else:  # DIVIDEND and others
+                        total_amount = quantity * price_per_unit
+                    
+                    # Create transaction
+                    transaction = Transaction(
+                        portfolio_id=portfolio.id if portfolio else None,
+                        company_id=company.id,
+                        transaction_date=datetime.strptime(row['date'], '%Y-%m-%d').date(),
+                        transaction_type=transaction_type,
+                        quantity=quantity,
+                        price_per_unit=price_per_unit,
+                        currency=row['currency'],
+                        fees=fees,
+                        broker=row.get('broker', ''),
+                        notes=row.get('notes', ''),
+                        total_amount=total_amount
+                    )
+                    session.add(transaction)
+                    loaded_count += 1
+                
+                session.commit()
+                self.logger.info(f"Loaded {loaded_count} transactions from CSV")
+                return loaded_count
+                
+        except Exception as e:
+            self.logger.error(f"Error loading transactions from CSV: {e}", exc_info=True)
+            raise DatabaseError(f"Failed to load transactions from CSV") from e
+    
+    def get_portfolio_summary(self, portfolio_name: str) -> Dict[str, Any]:
+        """
+        Get portfolio summary with holdings and transaction counts.
+        
+        Args:
+            portfolio_name: Portfolio name
+            
+        Returns:
+            Dictionary with portfolio summary information
+        """
+        try:
+            with self.get_session() as session:
+                portfolio = session.query(Portfolio).filter(
+                    Portfolio.name == portfolio_name
+                ).first()
+                
+                if not portfolio:
+                    return {'exists': False}
+                
+                # Count holdings
+                holdings_count = session.query(PortfolioHolding).filter(
+                    PortfolioHolding.portfolio_id == portfolio.id
+                ).count()
+                
+                # Count transactions
+                transactions_count = session.query(Transaction).filter(
+                    Transaction.portfolio_id == portfolio.id
+                ).count()
+                
+                # Get holdings breakdown by instrument type
+                from sqlalchemy import func
+                holdings_breakdown = session.query(
+                    Company.instrument_type,
+                    func.count().label('count')
+                ).join(PortfolioHolding).filter(
+                    PortfolioHolding.portfolio_id == portfolio.id
+                ).group_by(Company.instrument_type).all()
+                
+                return {
+                    'exists': True,
+                    'portfolio': {
+                        'name': portfolio.name,
+                        'description': portfolio.description,
+                        'currency': portfolio.currency,
+                        'created_date': portfolio.created_date,
+                        'created_at': portfolio.created_at
+                    },
+                    'holdings': {
+                        'total_count': holdings_count,
+                        'breakdown': {breakdown[0].value: breakdown[1] for breakdown in holdings_breakdown}
+                    },
+                    'transactions': {
+                        'count': transactions_count
+                    }
+                }
+                
+        except Exception as e:
+            self.logger.error(f"Error getting portfolio summary: {e}", exc_info=True)
+            raise DatabaseError(f"Failed to get portfolio summary") from e

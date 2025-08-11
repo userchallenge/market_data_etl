@@ -1,0 +1,11 @@
+date,ticker,isin,transaction_type,quantity,price_per_unit,currency,fees,broker,notes
+2024-01-15,SEB-C.ST,SE0000148884,buy,100,125.50,SEK,25.00,Avanza,Regular purchase
+2024-01-20,MSFT,US5949181045,buy,25,380.45,USD,9.95,Interactive Brokers,Tech allocation
+2024-02-01,O,US7561091049,buy,50,58.20,USD,9.95,Interactive Brokers,REIT position
+2024-02-15,SE0000862278,SE0000862278,buy,10,1250.00,SEK,0.00,AMF,Fund subscription
+2024-03-01,AMD,US0079031078,buy,30,182.75,USD,9.95,Interactive Brokers,Semiconductor play
+2024-03-15,SEB-C.ST,SE0000148884,sell,50,135.25,SEK,25.00,Avanza,Partial profit taking
+2024-04-01,BESI.AS,NL0012866412,buy,40,95.80,EUR,12.50,DeGiro,European semiconductor
+2024-04-20,IE00B6YX5C33,IE00B6YX5C33,buy,100,45.32,EUR,5.00,DeGiro,S&P 500 exposure via ETF
+2024-05-01,O,US7561091049,dividend,50,0.2575,USD,0.00,Interactive Brokers,Monthly dividend
+2024-06-15,MSFT,US5949181045,dividend,25,0.75,USD,0.00,Interactive Brokers,Quarterly dividend

@@ -1,0 +1,72 @@
+{
+  "name": "My Investment Portfolio",
+  "description": "Mixed portfolio of stocks and funds",
+  "created_date": "2024-01-01",
+  "currency": "SEK",
+  "holdings": {
+    "SEB-C.ST": {
+      "name": "Skandinaviska Enskilda Banken AB (SEB) C",
+      "isin": "SE0000148884",
+      "yahoo_ticker": "SEB-C.ST",
+      "type": "stock",
+      "sector": "Financial Services",
+      "country": "SE"
+    },
+    "O": {
+      "name": "Realty Income Corporation",
+      "isin": "US7561091049",
+      "yahoo_ticker": "O",
+      "type": "stock",
+      "sector": "Real Estate",
+      "country": "US"
+    },
+    "MSFT": {
+      "name": "Microsoft Corporation",
+      "isin": "US5949181045",
+      "yahoo_ticker": "MSFT",
+      "type": "stock",
+      "sector": "Technology",
+      "country": "US"
+    },
+    "AMD": {
+      "name": "Advanced Micro Devices, Inc.",
+      "isin": "US0079031078",
+      "yahoo_ticker": "AMD",
+      "type": "stock",
+      "sector": "Technology",
+      "country": "US"
+    },
+    "BESI.AS": {
+      "name": "BE Semiconductor Industries N.V.",
+      "isin": "NL0012866412",
+      "yahoo_ticker": "BESI.AS",
+      "type": "stock",
+      "sector": "Technology",
+      "country": "NL"
+    },
+    "SE0000862278": {
+      "name": "AMF Aktiefond Global",
+      "isin": "SE0000862278",
+      "yahoo_ticker": null,
+      "type": "fund",
+      "fund_type": "equity",
+      "country": "SE"
+    },
+    "SE0004841534": {
+      "name": "Avanza 75",
+      "isin": "SE0004841534",
+      "yahoo_ticker": null,
+      "type": "fund",
+      "fund_type": "mixed",
+      "country": "SE"
+    },
+    "IE00B6YX5C33": {
+      "name": "SPDR S&P 500 UCITS ETF (Dist)",
+      "isin": "IE00B6YX5C33",
+      "yahoo_ticker": "SPY5.DE",
+      "type": "etf",
+      "fund_type": "equity",
+      "country": "IE"
+    }
+  }
+}

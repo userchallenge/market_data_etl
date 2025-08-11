@@ -5,14 +5,18 @@ This module contains the actual command logic separated from
 argument parsing for better testability and organization.
 """
 
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from datetime import date, datetime
+import json
+import csv
+import os
 
 from ..etl.load import ETLOrchestrator
 from ..database.manager import DatabaseManager
 from ..utils.logging import get_logger
-from ..utils.exceptions import YahooFinanceError, ValidationError
+from ..utils.exceptions import YahooFinanceError, ValidationError, DatabaseError
 from ..utils.validation import validate_ticker, validate_date_string, validate_date_range, validate_years_parameter
+from ..data.models import InstrumentType
 
 logger = get_logger(__name__)
 
@@ -404,3 +408,545 @@ def financial_summary_command(
         logger.error(f"Unexpected error in financial_summary_command: {e}", exc_info=True)
         print(f"ERROR: Unexpected error: {e}")
         return 1
+
+
+def clear_database_command(
+    ticker: Optional[str] = None,
+    clear_all: bool = False,
+    confirm: bool = False
+) -> int:
+    """
+    Handle clear-database command for development/testing.
+    
+    Args:
+        ticker: Specific ticker to clear (optional)
+        clear_all: Clear all data from database
+        confirm: Skip confirmation prompt
+        
+    Returns:
+        Exit code (0 for success, 1 for error)
+    """
+    try:
+        # Validate ticker if provided
+        if ticker:
+            ticker = validate_ticker(ticker)
+        
+        # Initialize database manager
+        db = DatabaseManager()
+        
+        # Determine what to clear
+        if clear_all:
+            operation = "all data from the database"
+        else:
+            operation = f"all data for ticker {ticker}"
+        
+        # Confirmation prompt unless --confirm flag is used
+        if not confirm:
+            print(f"⚠️  WARNING: This will permanently delete {operation}!")
+            response = input("Are you sure you want to continue? (yes/no): ").lower().strip()
+            if response not in ['yes', 'y']:
+                print("Operation cancelled.")
+                return SUCCESS_EXIT_CODE
+        
+        print(f"Clearing {operation}...")
+        
+        if clear_all:
+            # Clear all data
+            result = db.clear_all_data()
+            if result:
+                print("✅ Successfully cleared all data from database")
+            else:
+                print("❌ Failed to clear database")
+                return ERROR_EXIT_CODE
+        else:
+            # Clear data for specific ticker
+            result = db.clear_ticker_data(ticker)
+            if result:
+                print(f"✅ Successfully cleared all data for {ticker}")
+            else:
+                print(f"❌ No data found for {ticker} or failed to clear")
+                return ERROR_EXIT_CODE
+        
+        return SUCCESS_EXIT_CODE
+        
+    except ValidationError as e:
+        print(f"ERROR: {e}")
+        return ERROR_EXIT_CODE
+    except Exception as e:
+        logger.error(f"Unexpected error in clear_database_command: {e}", exc_info=True)
+        print(f"ERROR: Unexpected error: {e}")
+        return ERROR_EXIT_CODE
+
+
+# =============================================================================
+# PORTFOLIO MANAGEMENT COMMANDS
+# =============================================================================
+
+def load_portfolio_command(file_path: str) -> int:
+    """
+    Handle load-portfolio command to load portfolio from JSON configuration.
+    
+    Args:
+        file_path: Path to portfolio JSON configuration file
+        
+    Returns:
+        Exit code (0 for success, 1 for error)
+    """
+    try:
+        # Validate file path
+        if not os.path.exists(file_path):
+            print(f"ERROR: Portfolio configuration file not found: {file_path}")
+            return ERROR_EXIT_CODE
+        
+        if not file_path.endswith('.json'):
+            print(f"ERROR: Portfolio configuration file must be a JSON file: {file_path}")
+            return ERROR_EXIT_CODE
+        
+        # Load and validate JSON
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                portfolio_config = json.load(f)
+        except json.JSONDecodeError as e:
+            print(f"ERROR: Invalid JSON in portfolio configuration file: {e}")
+            return ERROR_EXIT_CODE
+        except Exception as e:
+            print(f"ERROR: Failed to read portfolio configuration file: {e}")
+            return ERROR_EXIT_CODE
+        
+        # Validate required fields
+        required_fields = ['name', 'currency', 'created_date', 'holdings']
+        for field in required_fields:
+            if field not in portfolio_config:
+                print(f"ERROR: Missing required field in portfolio configuration: {field}")
+                return ERROR_EXIT_CODE
+        
+        if not portfolio_config['holdings']:
+            print("ERROR: Portfolio must contain at least one holding")
+            return ERROR_EXIT_CODE
+        
+        print(f"Loading portfolio configuration: {portfolio_config['name']}")
+        print(f"Holdings count: {len(portfolio_config['holdings'])}")
+        
+        # Initialize database manager
+        db = DatabaseManager()
+        
+        # Load portfolio
+        portfolio = db.load_portfolio_from_config(portfolio_config)
+        
+        print(f"✅ Successfully loaded portfolio: {portfolio.name}")
+        print(f"📊 Holdings: {len(portfolio_config['holdings'])} instruments")
+        
+        # Show holdings breakdown
+        holdings_by_type = {}
+        for holding_info in portfolio_config['holdings'].values():
+            instrument_type = holding_info.get('type', 'stock')
+            holdings_by_type[instrument_type] = holdings_by_type.get(instrument_type, 0) + 1
+        
+        for instrument_type, count in holdings_by_type.items():
+            print(f"  • {instrument_type.title()}: {count}")
+        
+        return SUCCESS_EXIT_CODE
+        
+    except DatabaseError as e:
+        print(f"ERROR: Database error: {e}")
+        return ERROR_EXIT_CODE
+    except ValidationError as e:
+        print(f"ERROR: {e}")
+        return ERROR_EXIT_CODE
+    except Exception as e:
+        logger.error(f"Unexpected error in load_portfolio_command: {e}", exc_info=True)
+        print(f"ERROR: Unexpected error: {e}")
+        return ERROR_EXIT_CODE
+
+
+def load_transactions_command(file_path: str, portfolio_name: Optional[str] = None) -> int:
+    """
+    Handle load-transactions command to load transactions from CSV file.
+    
+    Args:
+        file_path: Path to transactions CSV file
+        portfolio_name: Optional portfolio name to associate transactions with
+        
+    Returns:
+        Exit code (0 for success, 1 for error)
+    """
+    try:
+        # Validate file path
+        if not os.path.exists(file_path):
+            print(f"ERROR: Transactions CSV file not found: {file_path}")
+            return ERROR_EXIT_CODE
+        
+        if not file_path.endswith('.csv'):
+            print(f"ERROR: Transactions file must be a CSV file: {file_path}")
+            return ERROR_EXIT_CODE
+        
+        # Load and validate CSV
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                transactions_data = list(reader)
+        except Exception as e:
+            print(f"ERROR: Failed to read transactions CSV file: {e}")
+            return ERROR_EXIT_CODE
+        
+        if not transactions_data:
+            print("ERROR: Transactions CSV file is empty")
+            return ERROR_EXIT_CODE
+        
+        # Validate required columns
+        required_columns = ['date', 'ticker', 'transaction_type', 'quantity', 'price_per_unit', 'currency']
+        first_row = transactions_data[0]
+        for column in required_columns:
+            if column not in first_row:
+                print(f"ERROR: Missing required column in CSV: {column}")
+                return ERROR_EXIT_CODE
+        
+        print(f"Loading {len(transactions_data)} transactions from CSV")
+        if portfolio_name:
+            print(f"Associating with portfolio: {portfolio_name}")
+        
+        # Initialize database manager
+        db = DatabaseManager()
+        
+        # Load transactions
+        loaded_count = db.load_transactions_from_csv(transactions_data, portfolio_name)
+        
+        print(f"✅ Successfully loaded {loaded_count} transactions")
+        
+        return SUCCESS_EXIT_CODE
+        
+    except DatabaseError as e:
+        print(f"ERROR: Database error: {e}")
+        return ERROR_EXIT_CODE
+    except ValidationError as e:
+        print(f"ERROR: {e}")
+        return ERROR_EXIT_CODE
+    except Exception as e:
+        logger.error(f"Unexpected error in load_transactions_command: {e}", exc_info=True)
+        print(f"ERROR: Unexpected error: {e}")
+        return ERROR_EXIT_CODE
+
+
+def fetch_portfolio_prices_command(
+    portfolio_name: str,
+    from_date: str,
+    to_date: Optional[str] = None
+) -> int:
+    """
+    Handle fetch-portfolio-prices command to fetch price data for all portfolio holdings.
+    
+    Args:
+        portfolio_name: Portfolio name
+        from_date: Start date in YYYY-MM-DD format
+        to_date: End date in YYYY-MM-DD format (optional)
+        
+    Returns:
+        Exit code (0 for success, 1 for error)
+    """
+    try:
+        # Validate dates
+        start_date = validate_date_string(from_date, "from_date")
+        end_date = validate_date_string(to_date, "to_date") if to_date else date.today()
+        validate_date_range(start_date, end_date)
+        
+        print(f"Fetching portfolio prices for: {portfolio_name}")
+        print(f"Date range: {start_date} to {end_date}")
+        
+        # Initialize components
+        db = DatabaseManager()
+        etl = ETLOrchestrator()
+        
+        # Get portfolio summary
+        portfolio_summary = db.get_portfolio_summary(portfolio_name)
+        if not portfolio_summary['exists']:
+            print(f"ERROR: Portfolio '{portfolio_name}' not found")
+            return ERROR_EXIT_CODE
+        
+        # Get portfolio holdings with ticker information
+        with db.get_session() as session:
+            from ..data.models import Portfolio, PortfolioHolding, Company
+            
+            portfolio = session.query(Portfolio).filter(
+                Portfolio.name == portfolio_name
+            ).first()
+            
+            holdings = session.query(PortfolioHolding, Company).join(
+                Company, PortfolioHolding.company_id == Company.id
+            ).filter(PortfolioHolding.portfolio_id == portfolio.id).all()
+            
+            if not holdings:
+                print("ERROR: Portfolio has no holdings")
+                return ERROR_EXIT_CODE
+        
+        print(f"Processing {len(holdings)} holdings...")
+        
+        # Track results and errors
+        results = []
+        errors = []
+        
+        for holding, company in holdings:
+            ticker = company.ticker_symbol
+            
+            # Skip instruments without yahoo ticker
+            if not ticker or ticker == 'None':
+                if company.isin:
+                    print(f"⚠️  Skipping {company.company_name} ({company.isin}): No Yahoo ticker available")
+                    errors.append(f"No Yahoo ticker for {company.company_name}")
+                else:
+                    print(f"⚠️  Skipping {company.company_name}: No ticker or ISIN available")
+                    errors.append(f"No ticker for {company.company_name}")
+                continue
+            
+            try:
+                print(f"📈 Fetching {ticker} ({company.company_name})...")
+                
+                # Check for existing data
+                existing_dates = db.get_existing_price_dates(ticker)
+                missing_dates = find_missing_dates_in_range(existing_dates, start_date, end_date)
+                
+                if not missing_dates:
+                    print(f"  ✓ All data already exists for {ticker}")
+                    results.append({'ticker': ticker, 'status': 'up_to_date', 'records': len(existing_dates)})
+                    continue
+                
+                print(f"  • Processing {len(missing_dates)} missing days...")
+                
+                # Run ETL pipeline
+                earliest_missing = min(missing_dates)
+                latest_missing = max(missing_dates)
+                etl_results = etl.run_price_etl(ticker, earliest_missing, latest_missing)
+                
+                if etl_results['status'] == 'completed':
+                    loaded_records = etl_results['phases']['load']['loaded_records']
+                    print(f"  ✓ Loaded {loaded_records} records for {ticker}")
+                    results.append({'ticker': ticker, 'status': 'success', 'records': loaded_records})
+                else:
+                    error_msg = etl_results.get('error', 'Unknown error')
+                    print(f"  ❌ Failed to fetch {ticker}: {error_msg}")
+                    errors.append(f"{ticker}: {error_msg}")
+                
+            except Exception as e:
+                error_msg = str(e)
+                print(f"  ❌ Error processing {ticker}: {error_msg}")
+                errors.append(f"{ticker}: {error_msg}")
+        
+        # Report final results
+        print(f"\n📊 Portfolio Price Fetch Summary:")
+        print(f"Holdings processed: {len(holdings)}")
+        
+        successful = [r for r in results if r['status'] in ['success', 'up_to_date']]
+        if successful:
+            total_records = sum(r['records'] for r in successful)
+            print(f"✅ Successful: {len(successful)} holdings, {total_records} total records")
+        
+        if errors:
+            print(f"❌ Errors: {len(errors)}")
+            for error in errors:
+                print(f"  • {error}")
+            return ERROR_EXIT_CODE
+        
+        print("🎉 Portfolio price fetch completed successfully!")
+        return SUCCESS_EXIT_CODE
+        
+    except ValidationError as e:
+        print(f"ERROR: {e}")
+        return ERROR_EXIT_CODE
+    except DatabaseError as e:
+        print(f"ERROR: Database error: {e}")
+        return ERROR_EXIT_CODE
+    except Exception as e:
+        logger.error(f"Unexpected error in fetch_portfolio_prices_command: {e}", exc_info=True)
+        print(f"ERROR: Unexpected error: {e}")
+        return ERROR_EXIT_CODE
+
+
+def fetch_portfolio_fundamentals_command(portfolio_name: str) -> int:
+    """
+    Handle fetch-portfolio-fundamentals command to fetch fundamental data for stocks in portfolio.
+    Automatically skips funds and ETFs.
+    
+    Args:
+        portfolio_name: Portfolio name
+        
+    Returns:
+        Exit code (0 for success, 1 for error)
+    """
+    try:
+        print(f"Fetching portfolio fundamentals for: {portfolio_name}")
+        print("Note: Funds and ETFs will be automatically skipped")
+        
+        # Initialize components
+        db = DatabaseManager()
+        etl = ETLOrchestrator()
+        
+        # Get portfolio summary
+        portfolio_summary = db.get_portfolio_summary(portfolio_name)
+        if not portfolio_summary['exists']:
+            print(f"ERROR: Portfolio '{portfolio_name}' not found")
+            return ERROR_EXIT_CODE
+        
+        # Get portfolio holdings - only stocks
+        with db.get_session() as session:
+            from ..data.models import Portfolio, PortfolioHolding, Company
+            
+            portfolio = session.query(Portfolio).filter(
+                Portfolio.name == portfolio_name
+            ).first()
+            
+            # Filter for stocks only
+            stock_holdings = session.query(PortfolioHolding, Company).join(
+                Company, PortfolioHolding.company_id == Company.id
+            ).filter(
+                PortfolioHolding.portfolio_id == portfolio.id,
+                Company.instrument_type == InstrumentType.STOCK
+            ).all()
+            
+            total_holdings = session.query(PortfolioHolding).filter(
+                PortfolioHolding.portfolio_id == portfolio.id
+            ).count()
+        
+        print(f"Found {len(stock_holdings)} stocks out of {total_holdings} total holdings")
+        
+        if not stock_holdings:
+            print("No stocks found in portfolio for fundamental data fetching")
+            return SUCCESS_EXIT_CODE
+        
+        # Track results and errors
+        results = []
+        errors = []
+        
+        for holding, company in stock_holdings:
+            ticker = company.ticker_symbol
+            
+            # Skip instruments without yahoo ticker
+            if not ticker or ticker == 'None':
+                print(f"⚠️  Skipping {company.company_name}: No Yahoo ticker available")
+                errors.append(f"No Yahoo ticker for {company.company_name}")
+                continue
+            
+            try:
+                print(f"📊 Fetching fundamentals for {ticker} ({company.company_name})...")
+                
+                # Run financial ETL pipeline
+                etl_results = etl.run_financial_etl(ticker)
+                
+                if etl_results['status'] == 'completed':
+                    load_results = etl_results['phases']['load']['loaded_records']
+                    total_records = sum(load_results.values())
+                    print(f"  ✓ Loaded {total_records} financial records for {ticker}")
+                    results.append({'ticker': ticker, 'status': 'success', 'records': total_records})
+                else:
+                    error_msg = etl_results.get('error', 'Unknown error')
+                    print(f"  ❌ Failed to fetch {ticker}: {error_msg}")
+                    errors.append(f"{ticker}: {error_msg}")
+                
+            except Exception as e:
+                error_msg = str(e)
+                print(f"  ❌ Error processing {ticker}: {error_msg}")
+                errors.append(f"{ticker}: {error_msg}")
+        
+        # Report final results
+        print(f"\n📊 Portfolio Fundamentals Fetch Summary:")
+        print(f"Stocks processed: {len(stock_holdings)}")
+        
+        successful = [r for r in results if r['status'] == 'success']
+        if successful:
+            total_records = sum(r['records'] for r in successful)
+            print(f"✅ Successful: {len(successful)} stocks, {total_records} total records")
+        
+        if errors:
+            print(f"❌ Errors: {len(errors)}")
+            for error in errors:
+                print(f"  • {error}")
+            return ERROR_EXIT_CODE
+        
+        print("🎉 Portfolio fundamentals fetch completed successfully!")
+        return SUCCESS_EXIT_CODE
+        
+    except DatabaseError as e:
+        print(f"ERROR: Database error: {e}")
+        return ERROR_EXIT_CODE
+    except Exception as e:
+        logger.error(f"Unexpected error in fetch_portfolio_fundamentals_command: {e}", exc_info=True)
+        print(f"ERROR: Unexpected error: {e}")
+        return ERROR_EXIT_CODE
+
+
+def portfolio_info_command(portfolio_name: str) -> int:
+    """
+    Handle portfolio-info command to show portfolio information and holdings summary.
+    
+    Args:
+        portfolio_name: Portfolio name
+        
+    Returns:
+        Exit code (0 for success, 1 for error)
+    """
+    try:
+        # Initialize database manager
+        db = DatabaseManager()
+        
+        # Get portfolio summary
+        portfolio_summary = db.get_portfolio_summary(portfolio_name)
+        if not portfolio_summary['exists']:
+            print(f"Portfolio '{portfolio_name}' not found.")
+            return SUCCESS_EXIT_CODE
+        
+        portfolio = portfolio_summary['portfolio']
+        holdings = portfolio_summary['holdings']
+        transactions = portfolio_summary['transactions']
+        
+        print(f"Portfolio Information: {portfolio['name']}")
+        print("=" * 50)
+        print(f"Description: {portfolio['description'] or 'N/A'}")
+        print(f"Currency: {portfolio['currency']}")
+        print(f"Created: {portfolio['created_date']}")
+        print(f"Last Updated: {portfolio['created_at']}")
+        
+        print(f"\n📈 Holdings Summary:")
+        print(f"Total Holdings: {holdings['total_count']}")
+        
+        if holdings['breakdown']:
+            print("Breakdown by Type:")
+            for instrument_type, count in holdings['breakdown'].items():
+                print(f"  • {instrument_type.title()}: {count}")
+        
+        print(f"\n💰 Transactions:")
+        print(f"Total Transactions: {transactions['count']}")
+        
+        # Get detailed holdings information
+        with db.get_session() as session:
+            from ..data.models import Portfolio, PortfolioHolding, Company
+            
+            portfolio_db = session.query(Portfolio).filter(
+                Portfolio.name == portfolio_name
+            ).first()
+            
+            detailed_holdings = session.query(PortfolioHolding, Company).join(
+                Company, PortfolioHolding.company_id == Company.id
+            ).filter(PortfolioHolding.portfolio_id == portfolio_db.id).all()
+            
+            if detailed_holdings:
+                print(f"\n🏢 Holdings Details:")
+                print("-" * 80)
+                print(f"{'Ticker':<15} {'Name':<30} {'Type':<10} {'Country':<8} {'Sector':<20}")
+                print("-" * 80)
+                
+                for holding, company in detailed_holdings:
+                    ticker = company.ticker_symbol or company.isin or 'N/A'
+                    name = company.company_name[:28] + '..' if len(company.company_name) > 30 else company.company_name
+                    instrument_type = company.instrument_type.value if company.instrument_type else 'N/A'
+                    country = company.country or 'N/A'
+                    sector = (company.sector or '')[:18] + '..' if len(company.sector or '') > 20 else (company.sector or 'N/A')
+                    
+                    print(f"{ticker:<15} {name:<30} {instrument_type:<10} {country:<8} {sector:<20}")
+        
+        return SUCCESS_EXIT_CODE
+        
+    except DatabaseError as e:
+        print(f"ERROR: Database error: {e}")
+        return ERROR_EXIT_CODE
+    except Exception as e:
+        logger.error(f"Unexpected error in portfolio_info_command: {e}", exc_info=True)
+        print(f"ERROR: Unexpected error: {e}")
+        return ERROR_EXIT_CODE

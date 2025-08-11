@@ -16,7 +16,13 @@ from .commands import (
     fetch_fundamentals_command, 
     db_info_command,
     fetch_financial_statements_command,
-    financial_summary_command
+    financial_summary_command,
+    clear_database_command,
+    load_portfolio_command,
+    load_transactions_command,
+    fetch_portfolio_prices_command,
+    fetch_portfolio_fundamentals_command,
+    portfolio_info_command
 )
 
 
@@ -32,6 +38,9 @@ Examples:
   %(prog)s fetch-financial-statements --ticker AAPL
   %(prog)s financial-summary --ticker AAPL --years 3
   %(prog)s db-info --ticker VOLV-B.ST
+  %(prog)s clear-database --all
+  %(prog)s load-portfolio --file ./portfolios/my_portfolio.json
+  %(prog)s fetch-portfolio-prices --portfolio "My Portfolio" --from 2024-01-01
   
 Environment Variables:
   MARKET_DATA_DB_PATH         Database file path (default: market_data.db)
@@ -135,6 +144,97 @@ Environment Variables:
         help='Stock ticker symbol (e.g., AAPL, ERIC-B.ST)'
     )
     
+    # clear-database command
+    clear_parser = subparsers.add_parser(
+        'clear-database',
+        help='Clear database data for development/testing'
+    )
+    clear_group = clear_parser.add_mutually_exclusive_group(required=True)
+    clear_group.add_argument(
+        '--ticker',
+        help='Clear data for specific ticker only'
+    )
+    clear_group.add_argument(
+        '--all',
+        action='store_true',
+        help='Clear all data from database'
+    )
+    clear_parser.add_argument(
+        '--confirm',
+        action='store_true',
+        help='Skip confirmation prompt'
+    )
+    
+    # load-portfolio command
+    load_portfolio_parser = subparsers.add_parser(
+        'load-portfolio',
+        help='Load portfolio configuration from JSON file'
+    )
+    load_portfolio_parser.add_argument(
+        '--file',
+        required=True,
+        help='Path to portfolio JSON configuration file'
+    )
+    
+    # load-transactions command
+    load_transactions_parser = subparsers.add_parser(
+        'load-transactions',
+        help='Load transactions from CSV file'
+    )
+    load_transactions_parser.add_argument(
+        '--file',
+        required=True,
+        help='Path to transactions CSV file'
+    )
+    load_transactions_parser.add_argument(
+        '--portfolio',
+        help='Portfolio name to associate transactions with'
+    )
+    
+    # fetch-portfolio-prices command
+    portfolio_prices_parser = subparsers.add_parser(
+        'fetch-portfolio-prices',
+        help='Fetch price data for all holdings in a portfolio'
+    )
+    portfolio_prices_parser.add_argument(
+        '--portfolio',
+        required=True,
+        help='Portfolio name'
+    )
+    portfolio_prices_parser.add_argument(
+        '--from',
+        dest='from_date',
+        required=True,
+        help='Start date in YYYY-MM-DD format'
+    )
+    portfolio_prices_parser.add_argument(
+        '--to',
+        dest='to_date',
+        help='End date in YYYY-MM-DD format (defaults to today)'
+    )
+    
+    # fetch-portfolio-fundamentals command
+    portfolio_fundamentals_parser = subparsers.add_parser(
+        'fetch-portfolio-fundamentals',
+        help='Fetch fundamental data for stocks in a portfolio (skips funds)'
+    )
+    portfolio_fundamentals_parser.add_argument(
+        '--portfolio',
+        required=True,
+        help='Portfolio name'
+    )
+    
+    # portfolio-info command
+    portfolio_info_parser = subparsers.add_parser(
+        'portfolio-info',
+        help='Show portfolio information and holdings summary'
+    )
+    portfolio_info_parser.add_argument(
+        '--portfolio',
+        required=True,
+        help='Portfolio name'
+    )
+    
     return parser
 
 
@@ -173,6 +273,31 @@ def main() -> NoReturn:
             )
         elif args.command == 'db-info':
             exit_code = db_info_command(ticker=args.ticker)
+        elif args.command == 'clear-database':
+            exit_code = clear_database_command(
+                ticker=args.ticker,
+                clear_all=args.all,
+                confirm=args.confirm
+            )
+        elif args.command == 'load-portfolio':
+            exit_code = load_portfolio_command(file_path=args.file)
+        elif args.command == 'load-transactions':
+            exit_code = load_transactions_command(
+                file_path=args.file,
+                portfolio_name=args.portfolio
+            )
+        elif args.command == 'fetch-portfolio-prices':
+            exit_code = fetch_portfolio_prices_command(
+                portfolio_name=args.portfolio,
+                from_date=args.from_date,
+                to_date=args.to_date
+            )
+        elif args.command == 'fetch-portfolio-fundamentals':
+            exit_code = fetch_portfolio_fundamentals_command(
+                portfolio_name=args.portfolio
+            )
+        elif args.command == 'portfolio-info':
+            exit_code = portfolio_info_command(portfolio_name=args.portfolio)
         else:
             print(f"ERROR: Unknown command: {args.command}")
             exit_code = 1
