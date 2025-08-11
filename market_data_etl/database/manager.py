@@ -10,17 +10,22 @@ This module provides database operations for storing and retrieving:
 Designed for comprehensive financial analysis of global companies.
 """
 
-from typing import Dict, Any, List, Tuple, Optional
+from typing import Dict, Any, List, Tuple, Optional, Union
 from datetime import date, datetime
 from sqlalchemy import create_engine, and_, desc
 from sqlalchemy.orm import sessionmaker, Session
-from sqlalchemy.exc import IntegrityError
 import pandas as pd
 
 from ..config import config
 from ..utils.logging import get_logger
 from ..utils.exceptions import DatabaseError
+from ..utils.validation import validate_ticker, sanitize_sql_input, validate_currency_code
 from ..data.models import Base, Company, Price, IncomeStatement, BalanceSheet, CashFlow, FinancialRatio
+
+
+# Constants
+DEFAULT_SUMMARY_YEARS = 5
+MAX_SUMMARY_YEARS = 20
 
 
 class DatabaseManager:
@@ -31,7 +36,7 @@ class DatabaseManager:
     and structured financial statements with proper relationships and currency handling.
     """
     
-    def __init__(self, db_path: Optional[str] = None):
+    def __init__(self, db_path: Optional[str] = None) -> None:
         self.logger = get_logger(__name__)
         
         # Use provided path or default from config
@@ -79,6 +84,10 @@ class DatabaseManager:
         Returns:
             Company database record
         """
+        # Validate and sanitize inputs
+        ticker = validate_ticker(ticker)
+        currency = validate_currency_code(currency)
+        
         with self.get_session() as session:
             # Try to find existing company
             company = session.query(Company).filter(
@@ -236,8 +245,8 @@ class DatabaseManager:
                 return inserted_count
                 
         except Exception as e:
-            self.logger.error(f"Failed to store price data for {ticker}: {e}")
-            raise DatabaseError(f"Price data storage failed: {e}")
+            self.logger.error(f"Failed to store price data for {ticker}: {e}", exc_info=True)
+            raise DatabaseError(f"Price data storage failed: {e}") from e
     
     # =============================================================================
     # FINANCIAL DATA OPERATIONS
@@ -328,8 +337,8 @@ class DatabaseManager:
                 return storage_counts
                 
         except Exception as e:
-            self.logger.error(f"Failed to store financial data for {ticker}: {e}")
-            raise DatabaseError(f"Database storage failed: {e}")
+            self.logger.error(f"Failed to store financial data for {ticker}: {e}", exc_info=True)
+            raise DatabaseError(f"Database storage failed: {e}") from e
     
     def _get_or_create_company_in_session(
         self,
@@ -529,60 +538,76 @@ class DatabaseManager:
             balance_sheet.fiscal_quarter = period_info.get('fiscal_quarter')
             balance_sheet.currency = period_info.get('currency', 'USD')
             
-            # Set balance sheet metrics (abbreviated for space)
-            balance_sheet.cash_and_equivalents = metrics.get('cash_and_equivalents')
-            balance_sheet.accounts_receivable = metrics.get('accounts_receivable')
-            balance_sheet.inventory = metrics.get('inventory')
-            balance_sheet.total_current_assets = metrics.get('total_current_assets')
-            balance_sheet.total_assets = metrics.get('total_assets')
-            balance_sheet.accounts_payable = metrics.get('accounts_payable')
-            balance_sheet.total_current_liabilities = metrics.get('total_current_liabilities')
-            balance_sheet.long_term_debt = metrics.get('long_term_debt')
-            balance_sheet.total_liabilities = metrics.get('total_liabilities')
-            balance_sheet.total_shareholders_equity = metrics.get('total_shareholders_equity')
-            
-            # Set all other balance sheet fields
-            balance_sheet.short_term_investments = metrics.get('short_term_investments')
-            balance_sheet.prepaid_expenses = metrics.get('prepaid_expenses')
-            balance_sheet.other_current_assets = metrics.get('other_current_assets')
-            balance_sheet.property_plant_equipment = metrics.get('property_plant_equipment')
-            balance_sheet.goodwill = metrics.get('goodwill')
-            balance_sheet.intangible_assets = metrics.get('intangible_assets')
-            balance_sheet.long_term_investments = metrics.get('long_term_investments')
-            balance_sheet.other_non_current_assets = metrics.get('other_non_current_assets')
-            balance_sheet.total_non_current_assets = metrics.get('total_non_current_assets')
-            balance_sheet.short_term_debt = metrics.get('short_term_debt')
-            balance_sheet.accrued_expenses = metrics.get('accrued_expenses')
-            balance_sheet.deferred_revenue_current = metrics.get('deferred_revenue_current')
-            balance_sheet.other_current_liabilities = metrics.get('other_current_liabilities')
-            balance_sheet.deferred_revenue_non_current = metrics.get('deferred_revenue_non_current')
-            balance_sheet.deferred_tax_liabilities = metrics.get('deferred_tax_liabilities')
-            balance_sheet.other_non_current_liabilities = metrics.get('other_non_current_liabilities')
-            balance_sheet.total_non_current_liabilities = metrics.get('total_non_current_liabilities')
-            balance_sheet.common_stock = metrics.get('common_stock')
-            balance_sheet.retained_earnings = metrics.get('retained_earnings')
-            balance_sheet.accumulated_other_income = metrics.get('accumulated_other_income')
-            balance_sheet.treasury_stock = metrics.get('treasury_stock')
+            # Set balance sheet fields using helper method
+            self._populate_balance_sheet_fields(balance_sheet, metrics)
             
             # Calculate derived fields
-            if balance_sheet.short_term_debt and balance_sheet.long_term_debt:
-                balance_sheet.total_debt = balance_sheet.short_term_debt + balance_sheet.long_term_debt
-            elif balance_sheet.short_term_debt:
-                balance_sheet.total_debt = balance_sheet.short_term_debt
-            elif balance_sheet.long_term_debt:
-                balance_sheet.total_debt = balance_sheet.long_term_debt
-            
-            if balance_sheet.total_debt and balance_sheet.cash_and_equivalents:
-                balance_sheet.net_debt = balance_sheet.total_debt - balance_sheet.cash_and_equivalents
-            
-            if balance_sheet.total_current_assets and balance_sheet.total_current_liabilities:
-                balance_sheet.working_capital = balance_sheet.total_current_assets - balance_sheet.total_current_liabilities
+            self._calculate_balance_sheet_derived_fields(balance_sheet)
             
             return 1
             
         except Exception as e:
             self.logger.warning(f"Failed to store balance sheet for {period_date}: {e}")
             return 0
+    
+    def _populate_balance_sheet_fields(self, balance_sheet: BalanceSheet, metrics: Dict[str, Any]) -> None:
+        """Populate balance sheet fields from metrics dictionary."""
+        # Current assets
+        balance_sheet.cash_and_equivalents = metrics.get('cash_and_equivalents')
+        balance_sheet.short_term_investments = metrics.get('short_term_investments')
+        balance_sheet.accounts_receivable = metrics.get('accounts_receivable')
+        balance_sheet.inventory = metrics.get('inventory')
+        balance_sheet.prepaid_expenses = metrics.get('prepaid_expenses')
+        balance_sheet.other_current_assets = metrics.get('other_current_assets')
+        balance_sheet.total_current_assets = metrics.get('total_current_assets')
+        
+        # Non-current assets
+        balance_sheet.property_plant_equipment = metrics.get('property_plant_equipment')
+        balance_sheet.goodwill = metrics.get('goodwill')
+        balance_sheet.intangible_assets = metrics.get('intangible_assets')
+        balance_sheet.long_term_investments = metrics.get('long_term_investments')
+        balance_sheet.other_non_current_assets = metrics.get('other_non_current_assets')
+        balance_sheet.total_non_current_assets = metrics.get('total_non_current_assets')
+        balance_sheet.total_assets = metrics.get('total_assets')
+        
+        # Current liabilities
+        balance_sheet.accounts_payable = metrics.get('accounts_payable')
+        balance_sheet.short_term_debt = metrics.get('short_term_debt')
+        balance_sheet.accrued_expenses = metrics.get('accrued_expenses')
+        balance_sheet.deferred_revenue_current = metrics.get('deferred_revenue_current')
+        balance_sheet.other_current_liabilities = metrics.get('other_current_liabilities')
+        balance_sheet.total_current_liabilities = metrics.get('total_current_liabilities')
+        
+        # Non-current liabilities
+        balance_sheet.long_term_debt = metrics.get('long_term_debt')
+        balance_sheet.deferred_revenue_non_current = metrics.get('deferred_revenue_non_current')
+        balance_sheet.deferred_tax_liabilities = metrics.get('deferred_tax_liabilities')
+        balance_sheet.other_non_current_liabilities = metrics.get('other_non_current_liabilities')
+        balance_sheet.total_non_current_liabilities = metrics.get('total_non_current_liabilities')
+        balance_sheet.total_liabilities = metrics.get('total_liabilities')
+        
+        # Shareholders' equity
+        balance_sheet.common_stock = metrics.get('common_stock')
+        balance_sheet.retained_earnings = metrics.get('retained_earnings')
+        balance_sheet.accumulated_other_income = metrics.get('accumulated_other_income')
+        balance_sheet.treasury_stock = metrics.get('treasury_stock')
+        balance_sheet.total_shareholders_equity = metrics.get('total_shareholders_equity')
+    
+    def _calculate_balance_sheet_derived_fields(self, balance_sheet: BalanceSheet) -> None:
+        """Calculate derived fields for balance sheet."""
+        # Calculate total debt
+        short_debt = balance_sheet.short_term_debt or 0
+        long_debt = balance_sheet.long_term_debt or 0
+        if short_debt or long_debt:
+            balance_sheet.total_debt = short_debt + long_debt
+        
+        # Calculate net debt
+        if balance_sheet.total_debt and balance_sheet.cash_and_equivalents:
+            balance_sheet.net_debt = balance_sheet.total_debt - balance_sheet.cash_and_equivalents
+        
+        # Calculate working capital
+        if balance_sheet.total_current_assets and balance_sheet.total_current_liabilities:
+            balance_sheet.working_capital = balance_sheet.total_current_assets - balance_sheet.total_current_liabilities
     
     def _store_cash_flows(
         self,
@@ -771,7 +796,7 @@ class DatabaseManager:
     def get_company_financial_summary(
         self, 
         ticker: str,
-        years: int = 5
+        years: int = DEFAULT_SUMMARY_YEARS
     ) -> Dict[str, Any]:
         """
         Get comprehensive financial summary for a company.

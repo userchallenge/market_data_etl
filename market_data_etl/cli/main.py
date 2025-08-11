@@ -7,6 +7,7 @@ and dispatching to the appropriate command handlers.
 
 import argparse
 import sys
+from typing import NoReturn
 
 from ..utils.logging import setup_logging
 from ..config import config
@@ -137,7 +138,7 @@ Environment Variables:
     return parser
 
 
-def main():
+def main() -> NoReturn:
     """Main CLI entry point."""
     parser = create_parser()
     args = parser.parse_args()

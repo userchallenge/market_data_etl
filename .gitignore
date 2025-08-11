@@ -1,5 +1,6 @@
 # CW
 
+*.db
 config/
 tmp_output/
 *.sqlite

@@ -5,94 +5,60 @@ This module contains the actual command logic separated from
 argument parsing for better testability and organization.
 """
 
-from typing import List
+from typing import List, Optional
 from datetime import date, datetime
 
 from ..etl.load import ETLOrchestrator
 from ..database.manager import DatabaseManager
 from ..utils.logging import get_logger
 from ..utils.exceptions import YahooFinanceError, ValidationError
+from ..utils.validation import validate_ticker, validate_date_string, validate_date_range, validate_years_parameter
 
 logger = get_logger(__name__)
 
 
-def validate_ticker(ticker: str) -> str:
-    """
-    Validate ticker format.
-    
-    Args:
-        ticker: Ticker symbol
-        
-    Returns:
-        Validated ticker symbol
-        
-    Raises:
-        ValidationError: If ticker format is invalid
-    """
-    if not ticker or not ticker.strip():
-        raise ValidationError("Ticker cannot be empty")
-    
-    ticker = ticker.strip().upper()
-    
-    # Basic validation - allow alphanumeric and common ticker separators
-    if not all(c.isalnum() or c in '.-' for c in ticker):
-        raise ValidationError(f"Invalid ticker format: {ticker}")
-    
-    return ticker
+# Constants
+SUCCESS_EXIT_CODE = 0
+ERROR_EXIT_CODE = 1
+
+# Status messages
+PERIOD_TYPE_ANNUAL = 'annual'
+PERIOD_TYPE_QUARTERLY = 'quarterly'
 
 
-def parse_date(date_string: str) -> date:
-    """
-    Parse date string in YYYY-MM-DD format.
-    
-    Args:
-        date_string: Date in YYYY-MM-DD format
-        
-    Returns:
-        Parsed date object
-        
-    Raises:
-        ValidationError: If date format is invalid
-    """
-    try:
-        return datetime.strptime(date_string, '%Y-%m-%d').date()
-    except ValueError:
-        raise ValidationError(f"Invalid date format: {date_string}. Expected YYYY-MM-DD format.")
-
-
-def calculate_missing_dates(
+def find_missing_dates_in_range(
     existing_dates: List[date], 
-    from_date: date, 
-    to_date: date
+    range_start_date: date, 
+    range_end_date: date
 ) -> List[date]:
     """
     Calculate which dates are missing from existing data.
     
     Args:
         existing_dates: List of dates that already exist
-        from_date: Start date of requested range
-        to_date: End date of requested range
+        range_start_date: Start date of requested range
+        range_end_date: End date of requested range
         
     Returns:
         List of missing dates that need to be fetched
     """
-    existing_set = set(existing_dates)
+    existing_dates_set = set(existing_dates)
     
-    # Generate all dates in the range (excluding weekends for efficiency)
-    all_dates = []
-    current = from_date
-    while current <= to_date:
+    # Generate all dates in the range
+    all_dates_in_range = []
+    current_date = range_start_date
+    while current_date <= range_end_date:
         # Include all dates - Yahoo Finance will filter out non-trading days
-        all_dates.append(current)
-        current = date.fromordinal(current.toordinal() + 1)
+        all_dates_in_range.append(current_date)
+        current_date = date.fromordinal(current_date.toordinal() + 1)
     
-    return [d for d in all_dates if d not in existing_set]
+    return [d for d in all_dates_in_range if d not in existing_dates_set]
 
 
 def fetch_prices_command(
     ticker: str,
     from_date: str,
-    to_date: str = None
+    to_date: Optional[str] = None
 ) -> int:
     """
     Handle fetch-prices command using proper ETL pattern.
@@ -107,16 +73,10 @@ def fetch_prices_command(
     """
     try:
         ticker = validate_ticker(ticker)
-        start_date = parse_date(from_date)
-        end_date = parse_date(to_date) if to_date else date.today()
+        start_date = validate_date_string(from_date, "from_date")
+        end_date = validate_date_string(to_date, "to_date") if to_date else date.today()
         
-        if start_date > end_date:
-            print("ERROR: from_date cannot be after to_date")
-            return 1
-        
-        if end_date > date.today():
-            print("ERROR: to_date cannot be in the future")
-            return 1
+        validate_date_range(start_date, end_date)
         
         print(f"Running price ETL pipeline for {ticker} from {start_date} to {end_date}...")
         
@@ -126,11 +86,11 @@ def fetch_prices_command(
         # Check existing data to avoid unnecessary fetches
         db = DatabaseManager()
         existing_dates = db.get_existing_price_dates(ticker)
-        missing_dates = calculate_missing_dates(existing_dates, start_date, end_date)
+        missing_dates = find_missing_dates_in_range(existing_dates, start_date, end_date)
         
         if not missing_dates:
             print("Database already contains data for the full range. Nothing to fetch.")
-            return 0
+            return SUCCESS_EXIT_CODE
         
         print(f"Found {len(existing_dates)} days already in database, processing {len(missing_dates)} missing days...")
         
@@ -151,21 +111,21 @@ def fetch_prices_command(
             print(f"Operation completed successfully.")
         else:
             print(f"ERROR: ETL pipeline failed - {etl_results.get('error', 'Unknown error')}")
-            return 1
+            return ERROR_EXIT_CODE
         
-        return 0
+        return SUCCESS_EXIT_CODE
         
     except ValidationError as e:
         print(f"ERROR: {e}")
-        return 1
+        return ERROR_EXIT_CODE
     except YahooFinanceError as e:
         print(f"ERROR: Failed to fetch prices for {ticker} from Yahoo Finance.")
         print(str(e))
-        return 1
+        return ERROR_EXIT_CODE
     except Exception as e:
         logger.error(f"Unexpected error in fetch_prices_command: {e}", exc_info=True)
         print(f"ERROR: Unexpected error: {e}")
-        return 1
+        return ERROR_EXIT_CODE
 
 
 def fetch_fundamentals_command(ticker: str) -> int:
@@ -352,9 +312,7 @@ def financial_summary_command(
     try:
         ticker = validate_ticker(ticker)
         
-        if years < 1 or years > 20:
-            print("ERROR: Years must be between 1 and 20")
-            return 1
+        validate_years_parameter(years, 1, 20)
         
         print(f"Generating {years}-year financial summary for {ticker}...")
         

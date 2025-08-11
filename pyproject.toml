@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "market-data-etl"
+version = "2.0.0"
+authors = [
+    {name = "Generated with Claude Code", email = "noreply@anthropic.com"}
+]
+description = "A Python package for extracting and storing market data from Yahoo Finance"
+readme = "README.md"
+requires-python = ">=3.8"
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers", 
+    "Intended Audience :: Financial and Insurance Industry",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11", 
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Office/Business :: Financial :: Investment",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+keywords = ["finance", "stocks", "market data", "yahoo finance", "etl", "data extraction"]
+dependencies = [
+    "yfinance>=0.2.61",
+    "yahooquery>=2.3.7",
+    "sqlalchemy>=2.0.23", 
+    "pandas>=2.1.4",
+    "requests>=2.31.0"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "black>=23.0.0",
+    "flake8>=6.0.0",
+    "mypy>=1.0.0",
+]
+
+[project.scripts]
+market-data-etl = "market_data_etl.cli.main:main"
+mdetl = "market_data_etl.cli.main:main"
+
+[project.urls]
+"Bug Reports" = "https://github.com/userchallenge/market_data_etl/issues"
+"Source" = "https://github.com/userchallenge/market_data_etl"
+"Documentation" = "https://github.com/userchallenge/market_data_etl#readme"
+
+[tool.setuptools.packages.find]
+where = ["."]
