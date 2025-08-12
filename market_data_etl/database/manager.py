@@ -22,7 +22,8 @@ from ..utils.exceptions import DatabaseError
 from ..utils.validation import validate_ticker, sanitize_sql_input, validate_currency_code
 from ..data.models import (
     Base, Company, Price, IncomeStatement, BalanceSheet, CashFlow, FinancialRatio,
-    Portfolio, PortfolioHolding, Transaction, InstrumentType, TransactionType
+    Portfolio, PortfolioHolding, Transaction, InstrumentType, TransactionType,
+    EconomicIndicator, EconomicIndicatorData, Threshold, Frequency, ThresholdCategory
 )
 
 
@@ -1300,3 +1301,321 @@ class DatabaseManager:
         except Exception as e:
             self.logger.error(f"Error getting portfolio summary: {e}", exc_info=True)
             raise DatabaseError(f"Failed to get portfolio summary") from e
+    
+    # =============================================================================
+    # ECONOMIC DATA OPERATIONS
+    # =============================================================================
+    
+    def store_economic_data(self, economic_data: Dict[str, Any]) -> Dict[str, int]:
+        """
+        Store economic indicator data in the database.
+        
+        Args:
+            economic_data: Transformed economic data dictionary
+            
+        Returns:
+            Dictionary with counts of stored records
+            
+        Raises:
+            DatabaseError: If storage fails
+        """
+        try:
+            with self.get_session() as session:
+                indicator_id = economic_data.get('indicator_id')
+                source = economic_data.get('source')
+                
+                # Get or create economic indicator
+                indicator = self._get_or_create_economic_indicator(session, economic_data)
+                
+                # Store data points
+                data_points = economic_data.get('data_points', [])
+                stored_points = self._store_economic_data_points(session, indicator.id, data_points)
+                
+                session.commit()
+                
+                storage_counts = {
+                    'indicators': 1,
+                    'data_points': stored_points
+                }
+                
+                self.logger.info(
+                    f"Stored economic data for {source}/{indicator_id}: "
+                    f"{storage_counts['data_points']} data points"
+                )
+                
+                return storage_counts
+                
+        except Exception as e:
+            self.logger.error(f"Failed to store economic data: {e}", exc_info=True)
+            raise DatabaseError(f"Economic data storage failed: {e}") from e
+    
+    def _get_or_create_economic_indicator(
+        self,
+        session: Session,
+        economic_data: Dict[str, Any]
+    ) -> EconomicIndicator:
+        """Get existing economic indicator or create new one with duplicate prevention."""
+        indicator_id = economic_data.get('indicator_id')
+        standardized_name = economic_data.get('standardized_name')
+        
+        # Check if indicator already exists by indicator_id
+        indicator = session.query(EconomicIndicator).filter(
+            EconomicIndicator.indicator_id == indicator_id
+        ).first()
+        
+        if indicator:
+            # Update existing indicator
+            indicator.name = economic_data.get('name', indicator.name)
+            indicator.standardized_name = standardized_name or indicator.standardized_name
+            indicator.description = economic_data.get('description', indicator.description)
+            indicator.unit = economic_data.get('unit', indicator.unit)
+            indicator.frequency = self._parse_frequency(economic_data.get('frequency', 'monthly'))
+            indicator.source = economic_data.get('source', indicator.source)
+            indicator.updated_at = datetime.utcnow()
+            
+            self.logger.debug(f"Updated existing economic indicator: {indicator_id}")
+            return indicator
+        
+        # Check if standardized_name already exists (prevent duplicates by standardized name)
+        if standardized_name:
+            existing_by_std_name = session.query(EconomicIndicator).filter(
+                EconomicIndicator.standardized_name == standardized_name
+            ).first()
+            
+            if existing_by_std_name:
+                self.logger.warning(
+                    f"Indicator with standardized name '{standardized_name}' already exists "
+                    f"as '{existing_by_std_name.indicator_id}'. Skipping creation of '{indicator_id}'"
+                )
+                # Return existing indicator to prevent duplicate data types
+                return existing_by_std_name
+        
+        # Create new indicator
+        indicator = EconomicIndicator(
+            indicator_id=indicator_id,
+            name=economic_data.get('name', ''),
+            standardized_name=standardized_name,
+            description=economic_data.get('description', ''),
+            unit=economic_data.get('unit', ''),
+            frequency=self._parse_frequency(economic_data.get('frequency', 'monthly')),
+            source=economic_data.get('source', '')
+        )
+        session.add(indicator)
+        session.flush()  # Get the ID
+        
+        self.logger.debug(f"Created new economic indicator: {indicator_id} (standardized: {standardized_name})")
+        
+        return indicator
+    
+    def _store_economic_data_points(
+        self,
+        session: Session,
+        indicator_db_id: int,
+        data_points: List[Dict[str, Any]]
+    ) -> int:
+        """Store economic data points using same pattern as save_data.py."""
+        stored_count = 0
+        
+        # Get existing dates to avoid duplicates (same pattern as economic_data package)
+        existing = set(
+            session.query(EconomicIndicatorData.date)
+            .filter(EconomicIndicatorData.indicator_id == indicator_db_id)
+            .all()
+        )
+        existing_dates = {d[0] for d in existing}
+        
+        new_records = []
+        for point in data_points:
+            try:
+                date_str = point.get('date')
+                value = point.get('value')
+                
+                if not date_str or value is None:
+                    continue
+                
+                # Parse date
+                point_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+                
+                # Only add if not already exists
+                if point_date not in existing_dates:
+                    data_point = EconomicIndicatorData(
+                        indicator_id=indicator_db_id,
+                        date=point_date,
+                        value=float(value)
+                    )
+                    new_records.append(data_point)
+                    stored_count += 1
+                    
+            except Exception as e:
+                self.logger.warning(f"Failed to store data point {point}: {e}")
+                continue
+        
+        if new_records:
+            session.add_all(new_records)
+            self.logger.info(f"Inserted {len(new_records)} new records for indicator ID {indicator_db_id}")
+        
+        return stored_count
+    
+    def _parse_frequency(self, frequency_str: str) -> Frequency:
+        """Parse frequency string to enum."""
+        frequency_map = {
+            'daily': Frequency.DAILY,
+            'monthly': Frequency.MONTHLY,
+            'quarterly': Frequency.QUARTERLY,
+            'yearly': Frequency.YEARLY,
+            'annual': Frequency.YEARLY
+        }
+        return frequency_map.get(frequency_str.lower(), Frequency.MONTHLY)
+    
+    def get_economic_indicator_info(self, indicator_id: str) -> Dict[str, Any]:
+        """
+        Get information about stored data for an economic indicator.
+        
+        Args:
+            indicator_id: Economic indicator ID
+            
+        Returns:
+            Dictionary with indicator information
+        """
+        with self.get_session() as session:
+            indicator = session.query(EconomicIndicator).filter(
+                EconomicIndicator.indicator_id == indicator_id
+            ).first()
+            
+            if not indicator:
+                return {
+                    'indicator_id': indicator_id,
+                    'exists': False,
+                    'data_points': {}
+                }
+            
+            # Get data point info
+            data_count = session.query(EconomicIndicatorData).filter(
+                EconomicIndicatorData.indicator_id == indicator.id
+            ).count()
+            
+            # Get date range
+            from sqlalchemy import func
+            date_range = session.query(
+                func.min(EconomicIndicatorData.date),
+                func.max(EconomicIndicatorData.date)
+            ).filter(EconomicIndicatorData.indicator_id == indicator.id).first()
+            
+            return {
+                'indicator_id': indicator_id,
+                'exists': True,
+                'indicator': {
+                    'name': indicator.name,
+                    'description': indicator.description,
+                    'unit': indicator.unit,
+                    'frequency': indicator.frequency.value,
+                    'source': indicator.source,
+                    'created_at': indicator.created_at,
+                    'updated_at': indicator.updated_at
+                },
+                'data_points': {
+                    'count': data_count,
+                    'date_range': date_range if date_range[0] else None
+                }
+            }
+    
+    def get_economic_data(
+        self,
+        indicator_id: str,
+        from_date: Optional[date] = None,
+        to_date: Optional[date] = None
+    ) -> pd.DataFrame:
+        """
+        Retrieve economic data as DataFrame.
+        
+        Args:
+            indicator_id: Economic indicator ID
+            from_date: Optional start date filter
+            to_date: Optional end date filter
+            
+        Returns:
+            DataFrame with date and value columns
+        """
+        with self.get_session() as session:
+            indicator = session.query(EconomicIndicator).filter(
+                EconomicIndicator.indicator_id == indicator_id
+            ).first()
+            
+            if not indicator:
+                return pd.DataFrame(columns=['date', 'value'])
+            
+            query = session.query(
+                EconomicIndicatorData.date,
+                EconomicIndicatorData.value
+            ).filter(EconomicIndicatorData.indicator_id == indicator.id)
+            
+            if from_date:
+                query = query.filter(EconomicIndicatorData.date >= from_date)
+            if to_date:
+                query = query.filter(EconomicIndicatorData.date <= to_date)
+            
+            query = query.order_by(EconomicIndicatorData.date)
+            
+            results = query.all()
+            
+            if not results:
+                return pd.DataFrame(columns=['date', 'value'])
+            
+            df = pd.DataFrame(results, columns=['date', 'value'])
+            return df
+    
+    def store_thresholds(
+        self,
+        indicator_id: str,
+        thresholds: List[Dict[str, Any]]
+    ) -> int:
+        """
+        Store threshold definitions for an economic indicator.
+        
+        Args:
+            indicator_id: Economic indicator ID
+            thresholds: List of threshold dictionaries
+            
+        Returns:
+            Number of thresholds stored
+        """
+        try:
+            with self.get_session() as session:
+                indicator = session.query(EconomicIndicator).filter(
+                    EconomicIndicator.indicator_id == indicator_id
+                ).first()
+                
+                if not indicator:
+                    raise DatabaseError(f"Economic indicator {indicator_id} not found")
+                
+                # Clear existing thresholds
+                session.query(Threshold).filter(
+                    Threshold.indicator_id == indicator.id
+                ).delete()
+                
+                stored_count = 0
+                for threshold_data in thresholds:
+                    try:
+                        category_str = threshold_data.get('category', '').lower()
+                        category = ThresholdCategory(category_str)
+                        
+                        threshold = Threshold(
+                            indicator_id=indicator.id,
+                            category=category,
+                            min_value=threshold_data.get('min_value'),
+                            max_value=threshold_data.get('max_value')
+                        )
+                        session.add(threshold)
+                        stored_count += 1
+                        
+                    except Exception as e:
+                        self.logger.warning(f"Failed to store threshold {threshold_data}: {e}")
+                        continue
+                
+                session.commit()
+                self.logger.info(f"Stored {stored_count} thresholds for {indicator_id}")
+                return stored_count
+                
+        except Exception as e:
+            self.logger.error(f"Failed to store thresholds for {indicator_id}: {e}")
+            raise DatabaseError(f"Threshold storage failed: {e}") from e

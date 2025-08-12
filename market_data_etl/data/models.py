@@ -474,3 +474,97 @@ class Transaction(Base):
         Index('ix_transactions_type_date', 'transaction_type', 'transaction_date'),
         {'sqlite_autoincrement': True}
     )
+
+
+# =============================================================================
+# ECONOMIC DATA MODELS
+# =============================================================================
+
+class Frequency(enum.Enum):
+    """Enumeration for different data frequencies."""
+    DAILY = "daily"
+    MONTHLY = "monthly"
+    QUARTERLY = "quarterly"
+    YEARLY = "yearly"
+
+
+class ThresholdCategory(enum.Enum):
+    """Enumeration for threshold categories."""
+    bad = "bad"
+    normal = "normal"
+    good = "good"
+
+
+class EconomicIndicator(Base):
+    """
+    Economic indicator definition with metadata.
+    
+    Stores information about economic indicators from various sources
+    like Eurostat, ECB, FRED etc. with their metadata.
+    """
+    __tablename__ = 'economic_indicators'
+    
+    id = Column(Integer, primary_key=True)
+    indicator_id = Column(String(100), unique=True, nullable=False, index=True)
+    name = Column(String(200), nullable=False)
+    standardized_name = Column(String(100), unique=True, nullable=True, index=True)
+    description = Column(Text)
+    unit = Column(String(50))
+    frequency = Column(Enum(Frequency), nullable=False, default=Frequency.MONTHLY)
+    source = Column(String(50), nullable=False)  # eurostat, ecb, fred
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Relationships
+    data_points = relationship("EconomicIndicatorData", back_populates="indicator")
+    thresholds = relationship("Threshold", back_populates="indicator")
+
+
+class EconomicIndicatorData(Base):
+    """
+    Time series data points for economic indicators.
+    
+    Stores the actual data values for economic indicators with dates.
+    """
+    __tablename__ = 'economic_indicator_data'
+    
+    id = Column(Integer, primary_key=True)
+    indicator_id = Column(Integer, ForeignKey('economic_indicators.id'), nullable=False)
+    date = Column(Date, nullable=False, index=True)
+    value = Column(Float, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    # Relationships
+    indicator = relationship("EconomicIndicator", back_populates="data_points")
+    
+    # Indexes for efficient querying
+    __table_args__ = (
+        Index('ix_indicator_data_indicator_date', 'indicator_id', 'date', unique=True),
+        {'sqlite_autoincrement': True}
+    )
+
+
+class Threshold(Base):
+    """
+    Threshold definitions for economic indicator analysis.
+    
+    Defines good/normal/bad ranges for economic indicators to enable
+    automated analysis and alerts.
+    """
+    __tablename__ = 'thresholds'
+    
+    id = Column(Integer, primary_key=True)
+    indicator_id = Column(Integer, ForeignKey('economic_indicators.id'), nullable=False)
+    category = Column(Enum(ThresholdCategory), nullable=False)
+    min_value = Column(Float)
+    max_value = Column(Float)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    # Relationships
+    indicator = relationship("EconomicIndicator", back_populates="thresholds")
+    
+    # Indexes
+    __table_args__ = (
+        Index('ix_thresholds_indicator_category', 'indicator_id', 'category'),
+        {'sqlite_autoincrement': True}
+    )

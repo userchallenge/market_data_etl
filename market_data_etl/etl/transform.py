@@ -5,7 +5,7 @@ This module is responsible ONLY for transforming raw data into clean,
 standardized formats. No extraction or loading logic should be here.
 """
 
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from datetime import date, datetime
 import pandas as pd
 
@@ -328,3 +328,416 @@ class FinancialDataTransformer:
             df['date'] = [d.date() for d in df['date']]
         
         return df
+
+
+class EconomicDataTransformer:
+    """
+    Pure transformer for economic data.
+    
+    Responsibility: TRANSFORM ONLY
+    - Convert raw extracted data to standardized format
+    - Parse dates and values from different API formats
+    - Clean and validate data
+    - NO extraction or loading logic
+    """
+    
+    def __init__(self):
+        self.logger = get_logger(__name__)
+    
+    def transform_eurostat_data(self, raw_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Transform raw Eurostat data into standardized format.
+        
+        Args:
+            raw_data: Raw data from EconomicDataExtractor
+            
+        Returns:
+            Dictionary with transformed, standardized economic data
+        """
+        data_code = raw_data.get('data_code')
+        self.logger.info(f"Transforming Eurostat data for {data_code}")
+        
+        try:
+            json_data = raw_data.get('raw_data', {})
+            
+            # Extract time series data from Eurostat JSON structure
+            data_points = self._parse_eurostat_json(json_data)
+            
+            name = self._get_eurostat_indicator_name(data_code)
+            standardized_name = self._get_standardized_name('eurostat', data_code, name)
+            
+            transformed_data = {
+                'source': 'eurostat',
+                'indicator_id': data_code,
+                'name': name,
+                'standardized_name': standardized_name,
+                'description': f'Eurostat indicator: {data_code}',
+                'unit': self._extract_eurostat_unit(json_data),
+                'frequency': self._extract_eurostat_frequency(json_data),
+                'transformation_timestamp': datetime.utcnow().isoformat(),
+                'data_points': data_points
+            }
+            
+            self.logger.info(f"Transformed Eurostat data for {data_code}: {len(data_points)} data points")
+            return transformed_data
+            
+        except Exception as e:
+            self.logger.error(f"Failed to transform Eurostat data for {data_code}: {e}")
+            raise e
+    
+    def transform_ecb_data(self, raw_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Transform raw ECB data into standardized format.
+        
+        Args:
+            raw_data: Raw data from EconomicDataExtractor
+            
+        Returns:
+            Dictionary with transformed, standardized economic data
+        """
+        dataflow_ref = raw_data.get('dataflow_ref')
+        series_key = raw_data.get('series_key')
+        indicator_id = f"{dataflow_ref}.{series_key}"
+        
+        self.logger.info(f"Transforming ECB data for {indicator_id}")
+        
+        try:
+            json_data = raw_data.get('raw_data', {})
+            
+            # Extract time series data from ECB JSON structure
+            data_points = self._parse_ecb_json(json_data)
+            
+            name = self._get_ecb_indicator_name(dataflow_ref, series_key)
+            standardized_name = self._get_standardized_name('ecb', indicator_id, name)
+            
+            transformed_data = {
+                'source': 'ecb',
+                'indicator_id': indicator_id,
+                'name': name,
+                'standardized_name': standardized_name,
+                'description': f'ECB indicator: {indicator_id}',
+                'unit': self._extract_ecb_unit(json_data),
+                'frequency': 'monthly',  # Most ECB data is monthly
+                'transformation_timestamp': datetime.utcnow().isoformat(),
+                'data_points': data_points
+            }
+            
+            self.logger.info(f"Transformed ECB data for {indicator_id}: {len(data_points)} data points")
+            return transformed_data
+            
+        except Exception as e:
+            self.logger.error(f"Failed to transform ECB data for {indicator_id}: {e}")
+            raise e
+    
+    def transform_fred_data(self, raw_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Transform raw FRED data into standardized format.
+        
+        Args:
+            raw_data: Raw data from EconomicDataExtractor
+            
+        Returns:
+            Dictionary with transformed, standardized economic data
+        """
+        series_id = raw_data.get('series_id')
+        self.logger.info(f"Transforming FRED data for {series_id}")
+        
+        try:
+            json_data = raw_data.get('raw_data', {})
+            
+            # Extract time series data from FRED JSON structure
+            data_points = self._parse_fred_json(json_data)
+            
+            name = self._get_fred_indicator_name(series_id)
+            standardized_name = self._get_standardized_name('fred', series_id, name)
+            
+            transformed_data = {
+                'source': 'fred',
+                'indicator_id': series_id,
+                'name': name,
+                'standardized_name': standardized_name,
+                'description': f'FRED indicator: {series_id}',
+                'unit': self._extract_fred_unit(series_id),
+                'frequency': 'monthly',  # FRED data requested as monthly
+                'transformation_timestamp': datetime.utcnow().isoformat(),
+                'data_points': data_points
+            }
+            
+            self.logger.info(f"Transformed FRED data for {series_id}: {len(data_points)} data points")
+            return transformed_data
+            
+        except Exception as e:
+            self.logger.error(f"Failed to transform FRED data for {series_id}: {e}")
+            raise e
+    
+    def _parse_eurostat_json(self, json_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Parse Eurostat JSON data structure into list of data points."""
+        data_points = []
+        
+        try:
+            # Parse using the same logic as economic_data package
+            time_mapping = json_data["dimension"]["time"]["category"]["index"]
+            time_list = sorted(time_mapping.keys(), key=lambda x: time_mapping[x])
+            available_indexes = set(map(int, json_data.get("value", {}).keys()))
+            
+            for i, time in enumerate(time_list):
+                if i in available_indexes:
+                    try:
+                        # Convert Eurostat time format to date
+                        parsed_date = self._parse_eurostat_date(time)
+                        if parsed_date:
+                            value = json_data["value"][str(i)]
+                            if value is not None:
+                                data_points.append({
+                                    'date': parsed_date.isoformat(),
+                                    'value': float(value)
+                                })
+                    except (ValueError, TypeError) as e:
+                        self.logger.debug(f"Skipping invalid data point: {time}={json_data['value'].get(str(i))} ({e})")
+                        continue
+                        
+        except Exception as e:
+            self.logger.warning(f"Error parsing Eurostat JSON structure: {e}")
+        
+        return data_points
+    
+    def _parse_ecb_json(self, json_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Parse ECB JSON data structure into list of data points."""
+        data_points = []
+        
+        try:
+            # Parse using the same logic as economic_data package
+            time_periods_list = json_data["structure"]["dimensions"]["observation"][0]["values"]
+            series_data = next(iter(json_data["dataSets"][0]["series"].values()))
+            observations = series_data["observations"]
+            
+            for period_index_str, value_list in observations.items():
+                try:
+                    period_index = int(period_index_str)
+                    time_period_obj = time_periods_list[period_index]
+                    time_period = time_period_obj["id"]
+                    
+                    indicator_value = (
+                        value_list[0] if value_list and value_list[0] is not None else None
+                    )
+                    
+                    if indicator_value is not None:
+                        # Convert ECB time format to date
+                        parsed_date = self._parse_ecb_date(time_period)
+                        if parsed_date:
+                            data_points.append({
+                                'date': parsed_date.isoformat(),
+                                'value': float(indicator_value)
+                            })
+                            
+                except (ValueError, TypeError, IndexError) as e:
+                    self.logger.debug(f"Skipping invalid ECB observation: {period_index_str}={value_list} ({e})")
+                    continue
+                    
+        except Exception as e:
+            self.logger.warning(f"Error parsing ECB JSON structure: {e}")
+        
+        return data_points
+    
+    def _parse_fred_json(self, json_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Parse FRED JSON data structure into list of data points."""
+        data_points = []
+        
+        try:
+            observations = json_data.get('observations', [])
+            
+            for obs in observations:
+                try:
+                    date_str = obs.get('date')
+                    value_str = obs.get('value')
+                    
+                    # Skip missing values (FRED uses "." for missing data)
+                    if not value_str or value_str == '.':
+                        continue
+                    
+                    parsed_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+                    value = float(value_str)
+                    
+                    data_points.append({
+                        'date': parsed_date.isoformat(),
+                        'value': value
+                    })
+                    
+                except (ValueError, TypeError) as e:
+                    self.logger.debug(f"Skipping invalid FRED observation: {obs} ({e})")
+                    continue
+                    
+        except Exception as e:
+            self.logger.warning(f"Error parsing FRED JSON structure: {e}")
+        
+        return data_points
+    
+    def _parse_eurostat_date(self, time_key: str) -> Optional[date]:
+        """Parse Eurostat time format (e.g., '2023M01', '2024-01') to date."""
+        try:
+            if 'M' in time_key:
+                # Monthly format: 2023M01
+                year, month = time_key.split('M')
+                return date(int(year), int(month), 1)
+            elif 'Q' in time_key:
+                # Quarterly format: 2023Q1
+                year, quarter = time_key.split('Q')
+                month = (int(quarter) - 1) * 3 + 1
+                return date(int(year), month, 1)
+            elif '-' in time_key:
+                # Monthly format: 2024-01
+                year, month = time_key.split('-')
+                return date(int(year), int(month), 1)
+            elif len(time_key) == 4 and time_key.isdigit():
+                # Annual format: 2023
+                return date(int(time_key), 1, 1)
+        except (ValueError, AttributeError):
+            pass
+        return None
+    
+    def _parse_ecb_date(self, time_period: str) -> Optional[date]:
+        """Parse ECB time format to date."""
+        try:
+            if '-' in time_period:
+                if time_period.count('-') == 2:
+                    # Full date format: 2024-01-01
+                    year, month, day = time_period.split('-')
+                    return date(int(year), int(month), int(day))
+                else:
+                    # Month format: 2023-01
+                    year, month = time_period.split('-')
+                    return date(int(year), int(month), 1)
+            elif len(time_period) == 4 and time_period.isdigit():
+                # Annual format: 2023
+                return date(int(time_period), 1, 1)
+        except (ValueError, AttributeError):
+            pass
+        return None
+    
+    def _get_eurostat_indicator_name(self, data_code: str) -> str:
+        """Get human-readable name for Eurostat indicator."""
+        indicator_names = {
+            'prc_hicp_midx': 'Harmonised Index of Consumer Prices (HICP)',
+            'une_rt_m': 'Unemployment rate',
+            'nama_10_gdp': 'Gross domestic product at market prices',
+            'gov_10dd_edpt1': 'Government deficit/surplus, debt and associated data'
+        }
+        return indicator_names.get(data_code, f'Eurostat {data_code}')
+    
+    def _get_standardized_name(self, source: str, indicator_id: str, name: str) -> Optional[str]:
+        """Get standardized name for economic indicator."""
+        # Mapping from descriptive names to standardized names
+        name_mapping = {
+            "Harmonised Index of Consumer Prices (HICP)": "inflation_monthly_euro",
+            "Consumer Price Index for All Urban Consumers: All Items in U.S. City Average": "inflation_index_monthly_us",
+            "US Consumer Price Index (CPI)": "inflation_index_monthly_us",
+            "Main Refinancing Operations rate": "interest_rate_change_day_euro", 
+            "Effective Federal Funds Rate": "interest_rate_monthly_us",
+            "US Federal Funds Rate": "interest_rate_monthly_us",
+            "Unemployment rate": "unemployment_rate_monthly_euro",
+            "US Unemployment Rate": "unemployment_monthly_rate_us"
+        }
+        
+        # Also map by source + indicator_id for specific cases  
+        source_id_mapping = {
+            "eurostat_prc_hicp_midx": "inflation_monthly_euro",
+            "fred_CPIAUCSL": "inflation_index_monthly_us", 
+            "fred_UNRATE": "unemployment_monthly_rate_us",
+            "fred_DFF": "interest_rate_monthly_us",
+            "ecb_FM.D.U2.EUR.4F.KR.MRR_FR.LEV": "interest_rate_change_day_euro",
+            "ecb_FM.B.U2.EUR.4F.KR.MRR_FR.LEV": "interest_rate_monthly_euro",
+            "eurostat_une_rt_m": "unemployment_rate_monthly_euro"
+        }
+        
+        # Try source_id mapping first (most specific)
+        source_key = f"{source}_{indicator_id}"
+        if source_key in source_id_mapping:
+            return source_id_mapping[source_key]
+            
+        # Try name mapping
+        if name in name_mapping:
+            return name_mapping[name]
+            
+        return None
+    
+    def _get_ecb_indicator_name(self, dataflow_ref: str, series_key: str) -> str:
+        """Get human-readable name for ECB indicator."""
+        if dataflow_ref == 'FM' and 'MRR_FR' in series_key:
+            return 'Main Refinancing Operations rate'
+        elif dataflow_ref == 'BSI' and 'M3' in series_key:
+            return 'M3 Money Supply'
+        return f'ECB {dataflow_ref}.{series_key}'
+    
+    def _get_fred_indicator_name(self, series_id: str) -> str:
+        """Get human-readable name for FRED indicator."""
+        indicator_names = {
+            'UNRATE': 'US Unemployment Rate',
+            'CPIAUCSL': 'US Consumer Price Index (CPI)',
+            'DFF': 'US Federal Funds Rate',
+            'GDP': 'US Gross Domestic Product',
+            'PAYEMS': 'US Total Nonfarm Payrolls'
+        }
+        return indicator_names.get(series_id, f'FRED {series_id}')
+    
+    def _extract_eurostat_unit(self, json_data: Dict[str, Any]) -> str:
+        """Extract unit information from Eurostat JSON."""
+        try:
+            dimensions = json_data.get('dimension', {})
+            unit_dim = dimensions.get('unit')
+            if unit_dim and 'category' in unit_dim:
+                categories = unit_dim['category'].get('label', {})
+                if categories:
+                    return list(categories.values())[0]
+        except Exception:
+            pass
+        return 'Index'
+    
+    def _extract_eurostat_frequency(self, json_data: Dict[str, Any]) -> str:
+        """Extract frequency information from Eurostat JSON."""
+        try:
+            dimensions = json_data.get('dimension', {})
+            freq_dim = dimensions.get('freq')
+            if freq_dim and 'category' in freq_dim:
+                freq_codes = list(freq_dim['category'].get('label', {}).keys())
+                if freq_codes:
+                    freq_code = freq_codes[0]
+                    return self._convert_frequency_code_to_string(freq_code)
+        except Exception:
+            pass
+        return 'monthly'
+    
+    def _extract_ecb_unit(self, json_data: Dict[str, Any]) -> str:
+        """Extract unit information from ECB JSON."""
+        try:
+            structure = json_data.get('structure', {})
+            dimensions = structure.get('dimensions', {}).get('observation', [])
+            for dim in dimensions:
+                if dim.get('id') == 'UNIT_MEASURE' and 'values' in dim:
+                    values = dim['values']
+                    if values and len(values) > 0:
+                        return values[0].get('name', 'Percent')
+        except Exception:
+            pass
+        return 'Percent'
+    
+    def _extract_fred_unit(self, series_id: str) -> str:
+        """Extract unit information from FRED series ID."""
+        # FRED doesn't typically include unit info in observations response
+        # Would need to make separate API call for series info
+        unit_mapping = {
+            'UNRATE': 'Percent',
+            'CPIAUCSL': 'Index',
+            'DFF': 'Percent',
+            'GDP': 'Billions of Dollars'
+        }
+        return unit_mapping.get(series_id, 'Percent')
+    
+    def _convert_frequency_code_to_string(self, frequency_code: str) -> str:
+        """Convert frequency code to string."""
+        mapping = {
+            'D': 'daily',
+            'M': 'monthly',
+            'Q': 'quarterly', 
+            'A': 'yearly'
+        }
+        return mapping.get(frequency_code, 'monthly')

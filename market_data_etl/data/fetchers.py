@@ -7,10 +7,11 @@ from Yahoo Finance with robust error handling and exponential backoff.
 
 import time
 from typing import Optional, Dict, Any
-from datetime import date
+from datetime import date, datetime, timedelta
 import yfinance as yf
 import pandas as pd
 import requests
+import json
 
 from ..config import config
 from ..utils.logging import get_logger
@@ -149,17 +150,21 @@ class PriceFetcher(DataFetcher):
                         self.logger.info(f"Using period={period} for recent data")
                         data = yf_ticker.history(period=period, auto_adjust=False, prepost=False)
                     else:
+                        # Add one day to end_date for exclusive range
+                        end_date_exclusive = end_date + timedelta(days=1)
                         data = yf_ticker.history(
                             start=start_date.strftime('%Y-%m-%d'),
-                            end=end_date.strftime('%Y-%m-%d'),
+                            end=end_date_exclusive.strftime('%Y-%m-%d'),
                             auto_adjust=False,
                             prepost=False
                         )
                 else:
                     # Use date range for historical data
+                    # Add one day to end_date for exclusive range
+                    end_date_exclusive = end_date + timedelta(days=1)
                     data = yf_ticker.history(
                         start=start_date.strftime('%Y-%m-%d'),
-                        end=end_date.strftime('%Y-%m-%d'),
+                        end=end_date_exclusive.strftime('%Y-%m-%d'),
                         auto_adjust=False,
                         prepost=False
                     )
@@ -382,3 +387,202 @@ class FundamentalsFetcher(DataFetcher):
         else:
             # Convert other types to string
             return str(data)
+
+
+class EconomicDataFetcher(DataFetcher):
+    """
+    Economic data fetcher following established patterns.
+    
+    Provides methods to fetch economic data from multiple sources
+    with consistent error handling and retry logic.
+    """
+    
+    def __init__(self):
+        super().__init__()
+        self.logger = get_logger(__name__)
+    
+    def fetch_eurostat_json(self, data_code: str, from_date: str) -> Dict[str, Any]:
+        """
+        Fetch data from Eurostat API for European economic statistics.
+        
+        Args:
+            data_code: Eurostat dataset code (e.g., "prc_hicp_midx")
+            from_date: Start date in 'YYYY-MM-DD' format
+            
+        Returns:
+            Dictionary with raw JSON response
+            
+        Raises:
+            YahooFinanceError: If request fails after retries
+        """
+        def _fetch():
+            self.logger.info(f"Fetching Eurostat data for {data_code} from {from_date}")
+            
+            from_year_month = self._to_year_month(from_date)
+            
+            url = (
+                f"https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data/{data_code}"
+                f"?geo=EU27_2020"
+                f"&sinceTimePeriod={from_year_month}"
+                f"&format=JSON"
+            )
+            
+            try:
+                response = requests.get(url, timeout=30)
+                response.raise_for_status()
+                
+                json_data = response.json()
+                
+                return {
+                    'source': 'eurostat',
+                    'data_code': data_code,
+                    'from_date': from_date,
+                    'from_year_month': from_year_month,
+                    'url': url,
+                    'extraction_timestamp': datetime.utcnow().isoformat(),
+                    'raw_data': json_data
+                }
+                
+            except requests.exceptions.RequestException as e:
+                raise YahooFinanceError(f"Eurostat API request failed: {e}")
+            except Exception as e:
+                if "JSONDecodeError" in str(type(e)):
+                    raise YahooFinanceError(f"Eurostat JSON decode error: {e}")
+                raise e
+        
+        return self._retry_with_backoff(_fetch)
+    
+    def fetch_ecb_json(self, dataflow_ref: str, series_key: str, from_date: str, to_date: str) -> Dict[str, Any]:
+        """
+        Fetch data from ECB Data Portal API.
+        
+        Args:
+            dataflow_ref: ECB dataflow reference (e.g., "FM")
+            series_key: ECB series key (e.g., "B.U2.EUR.4F.KR.MRR_FR.LEV")
+            from_date: Start date in 'YYYY-MM-DD' format
+            to_date: End date in 'YYYY-MM-DD' format
+            
+        Returns:
+            Dictionary with raw JSON response
+            
+        Raises:
+            YahooFinanceError: If request fails after retries
+        """
+        def _fetch():
+            self.logger.info(
+                f"Fetching ECB data for dataflow {dataflow_ref}, series {series_key}, "
+                f"from {from_date} to {to_date}"
+            )
+            
+            from_year_month = self._to_year_month(from_date)
+            to_year_month = self._to_year_month(to_date)
+            
+            url = (
+                f"https://data-api.ecb.europa.eu/service/data/{dataflow_ref}/{series_key}"
+                f"?format=jsondata&startPeriod={from_year_month}"
+                f"&endPeriod={to_year_month}"
+            )
+            
+            headers = {"Accept": "application/json"}
+            
+            try:
+                response = requests.get(url, headers=headers, timeout=30)
+                response.raise_for_status()
+                
+                json_data = response.json()
+                
+                return {
+                    'source': 'ecb',
+                    'dataflow_ref': dataflow_ref,
+                    'series_key': series_key,
+                    'from_date': from_date,
+                    'to_date': to_date,
+                    'from_year_month': from_year_month,
+                    'to_year_month': to_year_month,
+                    'url': url,
+                    'extraction_timestamp': datetime.utcnow().isoformat(),
+                    'raw_data': json_data
+                }
+                
+            except requests.exceptions.RequestException as e:
+                raise YahooFinanceError(f"ECB API request failed: {e}")
+            except Exception as e:
+                if "JSONDecodeError" in str(type(e)):
+                    raise YahooFinanceError(f"ECB JSON decode error: {e}")
+                raise e
+        
+        return self._retry_with_backoff(_fetch)
+    
+    def fetch_fred_json(self, series_id: str, api_key: str, from_date: str, to_date: str) -> Dict[str, Any]:
+        """
+        Fetch data from FRED API (US Federal Reserve Economic Data).
+        
+        Args:
+            series_id: FRED series ID (e.g., "UNRATE", "CPIAUCSL", "DFF")
+            api_key: FRED API key
+            from_date: Start date in 'YYYY-MM-DD' format
+            to_date: End date in 'YYYY-MM-DD' format
+            
+        Returns:
+            Dictionary with raw JSON response
+            
+        Raises:
+            YahooFinanceError: If request fails after retries
+        """
+        def _fetch():
+            self.logger.info(f"Fetching FRED data for series ID {series_id}, from {from_date} to {to_date}")
+            
+            url = (
+                f"https://api.stlouisfed.org/fred/series/observations?series_id={series_id}"
+                f"&api_key={api_key}"
+                f"&file_type=json&frequency=m"
+                f"&observation_start={from_date}&observation_end={to_date}"
+            )
+            
+            try:
+                response = requests.get(url, timeout=30)
+                response.raise_for_status()
+                
+                json_data = response.json()
+                
+                return {
+                    'source': 'fred',
+                    'series_id': series_id,
+                    'from_date': from_date,
+                    'to_date': to_date,
+                    'url': url,
+                    'extraction_timestamp': datetime.utcnow().isoformat(),
+                    'raw_data': json_data
+                }
+                
+            except requests.exceptions.RequestException as e:
+                raise YahooFinanceError(f"FRED API request failed: {e}")
+            except Exception as e:
+                if "JSONDecodeError" in str(type(e)):
+                    raise YahooFinanceError(f"FRED JSON decode error: {e}")
+                raise e
+        
+        return self._retry_with_backoff(_fetch)
+    
+    def _to_year_month(self, date_str: str) -> str:
+        """
+        Convert date string to YYYY-MM format.
+        
+        Args:
+            date_str: Date string in YYYY-MM-DD format
+            
+        Returns:
+            Date in YYYY-MM format
+        """
+        if not date_str:
+            # Return today's date
+            today = date.today()
+            return today.strftime("%Y-%m")
+        
+        try:
+            parsed_date = pd.to_datetime(date_str)
+            return parsed_date.strftime("%Y-%m")
+        except Exception:
+            # Fallback to current date
+            today = date.today()
+            return today.strftime("%Y-%m")

@@ -4,14 +4,68 @@ This document provides comprehensive guidelines for implementing additional func
 
 ## Core Architecture Principles
 
-### 1. Separation of Concerns
+### 1. Unified File Structure (CRITICAL)
+**ALL data types (price, fundamentals, economic, crypto, etc.) MUST follow the same file organization pattern:**
+
+```
+data/
+├── fetchers.py              # ALL fetchers: PriceFetcher + FundamentalsFetcher + EconomicDataFetcher + NewFetcher
+├── financial_standardizer.py
+└── models.py               # ALL models: Price + IncomeStatement + EconomicIndicator + NewModel
+
+etl/
+├── extract.py              # ALL extractors: FinancialDataExtractor + PriceDataExtractor + EconomicDataExtractor + NewExtractor
+├── transform.py            # ALL transformers: FinancialDataTransformer + EconomicDataTransformer + NewTransformer
+└── load.py                 # ALL loaders: FinancialDataLoader + EconomicDataLoader + ETLOrchestrator + NewLoader
+
+cli/
+├── commands.py             # ALL command functions: fetch_prices_command + fetch_economic_command + new_command
+└── main.py                 # ALL CLI parsers and dispatch logic
+```
+
+**❌ NEVER DO**:
+- Create separate files like `new_data_fetcher.py`, `new_data_extract.py`, `new_data_transform.py`, `new_data_load.py`
+- Create separate CLI files for new data types
+- Use inconsistent naming patterns
+
+**✅ ALWAYS DO**:
+- Add new classes to existing unified files
+- Follow exact same patterns as price/fundamentals/economic
+- Maintain single import points for related functionality
+
+### 2. Separation of Concerns
 The codebase follows strict ETL separation:
-- **data/**: Data models, business logic, domain expertise
-- **etl/**: Pure Extract-Transform-Load pipeline (no business logic)
+- **data/**: Data models, business logic, domain expertise (UNIFIED in single files)
+- **etl/**: Pure Extract-Transform-Load pipeline (UNIFIED in single files)
 - **database/**: Unified data persistence layer
 - **utils/**: Cross-cutting concerns (logging, validation, exceptions)
 
-### 2. Single Database Principle
+### 2. CLI Integration (MANDATORY)
+**ALL new data types MUST be integrated into the unified CLI interface:**
+
+**✅ Required CLI Commands**:
+```bash
+# Pattern for ALL data types:
+market-data-etl fetch-[datatype] --source [source] --indicator [id] --from [date]
+market-data-etl [datatype]-info --indicator [id]
+
+# Examples:
+market-data-etl fetch-prices --ticker AAPL --from 2024-01-01
+market-data-etl fetch-fundamentals --ticker AAPL  
+market-data-etl fetch-economic --source eurostat --indicator prc_hicp_midx --from 2024-01-01
+market-data-etl economic-info --indicator prc_hicp_midx
+```
+
+**Implementation Steps**:
+1. Add command functions to `cli/commands.py` (same file, not separate files)
+2. Add argument parsers to `cli/main.py` (same file, not separate files)  
+3. Add command dispatch logic to main() function
+4. Update help examples with new commands
+5. Follow exact same patterns as existing commands (error handling, validation, output)
+
+**❌ NEVER create standalone test scripts** - integrate into CLI instead!
+
+### 3. Single Database Principle
 **CRITICAL**: The entire application must use a single database file.
 - Default: `market_data.db` in the root directory
 - All models use the same `Base` from `data/models.py`
@@ -25,11 +79,11 @@ External Source → data/fetchers → etl/extract → etl/transform → etl/load
 
 ## Implementation Guidelines
 
-### Adding New Data Types
+### Adding New Data Types (UNIFIED APPROACH)
 
-When adding new data types (economic, crypto, etc.), follow this exact pattern:
+When adding new data types (crypto, alternative data, etc.), follow this **UNIFIED** pattern:
 
-#### 1. Database Models (`data/models.py`)
+#### 1. Database Models (`data/models.py` - ADD TO EXISTING FILE)
 ```python
 # Add to existing models.py file - never create separate model files
 class NewDataType(Base):
@@ -47,10 +101,9 @@ class NewDataType(Base):
     )
 ```
 
-#### 2. Data Fetcher (`data/new_data_fetcher.py`)
+#### 2. Data Fetcher (`data/fetchers.py` - ADD TO EXISTING FILE)
 ```python
-from .fetchers import DataFetcher
-
+# ADD to existing fetchers.py - don't create new files!
 class NewDataFetcher(DataFetcher):
     """Inherits retry logic, error handling, logging from base class."""
     
@@ -61,18 +114,21 @@ class NewDataFetcher(DataFetcher):
         return self._retry_with_backoff(_fetch)
 ```
 
-#### 3. ETL Components
-Follow the three-file pattern:
+#### 3. ETL Components (ADD TO EXISTING FILES)
 
-**`etl/new_data_extract.py`** - Pure extraction only:
+**ADD to `etl/extract.py`** - Pure extraction only:
 ```python
-class NewDataExtractor(NewDataFetcher):
+class NewDataExtractor:
+    def __init__(self):
+        from ..data.fetchers import NewDataFetcher
+        self.fetcher = NewDataFetcher()
+        
     def extract_new_data(self, params):
         # ONLY extraction - no transformation
         pass
 ```
 
-**`etl/new_data_transform.py`** - Pure transformation only:
+**ADD to `etl/transform.py`** - Pure transformation only:
 ```python
 class NewDataTransformer:
     def transform_new_data(self, raw_data):
@@ -80,7 +136,7 @@ class NewDataTransformer:
         pass
 ```
 
-**`etl/new_data_load.py`** - Loading and orchestration:
+**ADD to `etl/load.py`** - Loading and orchestration:
 ```python
 class NewDataLoader:
     def load_new_data(self, transformed_data):
@@ -88,12 +144,21 @@ class NewDataLoader:
         pass
 
 class NewDataETLOrchestrator:
+    def __init__(self, db_manager=None):
+        # Import from unified locations
+        from .extract import NewDataExtractor
+        from .transform import NewDataTransformer
+        
+        self.extractor = NewDataExtractor()
+        self.transformer = NewDataTransformer()
+        self.loader = NewDataLoader()
+    
     def run_new_data_etl(self):
         # Coordinate extract → transform → load
         pass
 ```
 
-#### 4. Database Manager Extensions
+#### 4. Database Manager Extensions (`database/manager.py` - ADD TO EXISTING FILE)
 Add methods to the existing `DatabaseManager` class:
 ```python
 def store_new_data(self, new_data: Dict[str, Any]) -> Dict[str, int]:
@@ -103,6 +168,64 @@ def store_new_data(self, new_data: Dict[str, Any]) -> Dict[str, int]:
 def get_new_data_info(self, identifier: str) -> Dict[str, Any]:
     """Follow exact same pattern as get_ticker_info."""
     pass
+```
+
+#### 5. CLI Integration (MANDATORY - ADD TO EXISTING FILES)
+
+**ADD to `cli/commands.py`**:
+```python
+def fetch_new_data_command(source: str, identifier: str, from_date: str) -> int:
+    """Handle fetch-new-data command."""
+    try:
+        # Follow exact same patterns as fetch_economic_command
+        from ..etl.load import NewDataETLOrchestrator
+        
+        # Validate inputs using existing utilities
+        start_date = validate_date_string(from_date, "from_date")
+        
+        # Run ETL pipeline
+        etl = NewDataETLOrchestrator()
+        results = etl.run_new_data_etl(source, identifier, from_date)
+        
+        # Report results with same format as other commands
+        if results['status'] == 'completed':
+            print(f"✅ Successfully processed {source} data for {identifier}")
+            return SUCCESS_EXIT_CODE
+        else:
+            print(f"❌ Failed to fetch {source} data")
+            return ERROR_EXIT_CODE
+            
+    except ValidationError as e:
+        print(f"ERROR: {e}")
+        return ERROR_EXIT_CODE
+        
+def new_data_info_command(identifier: str) -> int:
+    """Handle new-data-info command."""
+    # Follow exact same pattern as economic_info_command
+    pass
+```
+
+**ADD to `cli/main.py`** argument parsers:
+```python
+# Add to create_parser() function - don't create separate CLI files!
+new_data_parser = subparsers.add_parser(
+    'fetch-new-data',
+    help='Fetch new data from various sources'
+)
+new_data_parser.add_argument('--source', required=True)
+new_data_parser.add_argument('--identifier', required=True) 
+new_data_parser.add_argument('--from', dest='from_date', required=True)
+```
+
+**ADD to `cli/main.py`** command dispatch:
+```python
+# Add to main() function command handling
+elif args.command == 'fetch-new-data':
+    exit_code = fetch_new_data_command(
+        source=args.source,
+        identifier=args.identifier,
+        from_date=args.from_date
+    )
 ```
 
 ### Code Quality Standards
@@ -223,12 +346,27 @@ def test_new_functionality():
 
 Before submitting any new functionality:
 
+### ✅ File Structure Consistency (CRITICAL)
+- [ ] **NO new fetcher files** - added classes to `data/fetchers.py`
+- [ ] **NO new ETL files** - added classes to `etl/extract.py`, `etl/transform.py`, `etl/load.py`
+- [ ] **NO new CLI files** - added functions to `cli/commands.py` and `cli/main.py`
+- [ ] **NO separate test scripts** - integrated into unified CLI
+- [ ] Models added to existing `data/models.py`
+
+### ✅ CLI Integration (CRITICAL)  
+- [ ] Added fetch command to `cli/commands.py`
+- [ ] Added info command to `cli/commands.py`
+- [ ] Added argument parsers to `cli/main.py`
+- [ ] Added command dispatch to `cli/main.py`
+- [ ] Updated help examples with new commands
+- [ ] Follows exact same patterns as existing commands
+
 ### ✅ Architecture Compliance
 - [ ] Uses single database file (`market_data.db`)
 - [ ] Follows ETL separation (extract/transform/load)
 - [ ] Extends existing `DatabaseManager`
 - [ ] Uses existing base classes (`DataFetcher`, etc.)
-- [ ] Adds models to existing `models.py`
+- [ ] Imports from unified locations (not separate files)
 
 ### ✅ Code Quality
 - [ ] Comprehensive type hints
@@ -257,6 +395,20 @@ Before submitting any new functionality:
 
 ## Anti-Patterns to Avoid
 
+### ❌ File Structure Anti-Patterns (CRITICAL TO AVOID)
+- Creating separate fetcher files (`new_data_fetcher.py`)
+- Creating separate ETL files (`new_extract.py`, `new_transform.py`, `new_load.py`)
+- Creating separate CLI files for new data types
+- Creating standalone test scripts instead of CLI integration
+- Using inconsistent file naming patterns
+
+### ❌ CLI Anti-Patterns (CRITICAL TO AVOID)  
+- Creating standalone test files like `test_implementation.py`
+- Not integrating new functionality into the unified CLI
+- Creating separate command modules 
+- Inconsistent argument patterns
+- Missing help text and examples
+
 ### ❌ Database Anti-Patterns
 - Creating separate database files
 - Creating separate `Base` declaratives
@@ -269,6 +421,7 @@ Before submitting any new functionality:
 - Extraction logic in transform components
 - Loading logic in extract components
 - Bypassing the standard data flow
+- Importing from separate files instead of unified locations
 
 ### ❌ Code Anti-Patterns
 - Creating new exception types unnecessarily

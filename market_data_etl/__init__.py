@@ -20,17 +20,15 @@ __author__ = "Generated with Claude Code"
 __license__ = "MIT"
 
 # Core imports for easy access
-from .data.fetchers import PriceFetcher, FundamentalsFetcher
-from .data.financial_fetcher import FinancialStatementFetcher
+from .data.fetchers import PriceFetcher, FundamentalsFetcher, EconomicDataFetcher
 from .data.financial_standardizer import FinancialStandardizer
 from .database.manager import DatabaseManager
-# FinancialDatabaseManager merged into DatabaseManager
 from .utils.exceptions import MarketDataETLError, YahooFinanceError
 
 __all__ = [
     "PriceFetcher",
     "FundamentalsFetcher", 
-    "FinancialStatementFetcher",
+    "EconomicDataFetcher",
     "FinancialStandardizer",
     "DatabaseManager",
     "MarketDataETLError",

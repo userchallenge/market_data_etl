@@ -950,3 +950,182 @@ def portfolio_info_command(portfolio_name: str) -> int:
         logger.error(f"Unexpected error in portfolio_info_command: {e}", exc_info=True)
         print(f"ERROR: Unexpected error: {e}")
         return ERROR_EXIT_CODE
+
+
+def fetch_economic_command(
+    source: str,
+    indicator: str,
+    from_date: str,
+    to_date: Optional[str] = None,
+    api_key: Optional[str] = None
+) -> int:
+    """
+    Handle fetch-economic command to fetch economic data from various sources.
+    
+    Args:
+        source: Data source (eurostat, ecb, fred)
+        indicator: Indicator code or ID
+        from_date: Start date in YYYY-MM-DD format
+        to_date: End date in YYYY-MM-DD format (required for ECB and FRED)
+        api_key: API key (required for FRED)
+        
+    Returns:
+        Exit code (0 for success, 1 for error)
+    """
+    try:
+        # Import economic ETL components
+        from ..etl.load import EconomicETLOrchestrator
+        
+        # Validate dates
+        start_date_obj = validate_date_string(from_date, "from_date")
+        if to_date:
+            end_date_obj = validate_date_string(to_date, "to_date")
+            validate_date_range(start_date_obj, end_date_obj)
+        
+        # Validate source
+        valid_sources = ['eurostat', 'ecb', 'fred']
+        if source.lower() not in valid_sources:
+            print(f"ERROR: Invalid source '{source}'. Valid sources: {', '.join(valid_sources)}")
+            return ERROR_EXIT_CODE
+        
+        source = source.lower()
+        
+        # Source-specific validation
+        if source in ['ecb', 'fred'] and not to_date:
+            print(f"ERROR: --to date is required for {source.upper()} data source")
+            return ERROR_EXIT_CODE
+        
+        if source == 'fred' and not api_key:
+            print("ERROR: --api-key is required for FRED data source")
+            print("Get your free API key from: https://fred.stlouisfed.org/docs/api/api_key.html")
+            return ERROR_EXIT_CODE
+        
+        print(f"Fetching {source.upper()} economic data for indicator: {indicator}")
+        print(f"Date range: {from_date} to {to_date or 'present'}")
+        
+        # Initialize ETL orchestrator
+        etl = EconomicETLOrchestrator()
+        
+        # Run appropriate ETL pipeline based on source
+        if source == 'eurostat':
+            etl_results = etl.run_eurostat_etl(indicator, from_date)
+        elif source == 'ecb':
+            # ECB requires parsing the indicator into dataflow_ref and series_key
+            if '.' not in indicator:
+                print("ERROR: ECB indicator must be in format 'dataflow_ref.series_key' (e.g., 'FM.B.U2.EUR.4F.KR.MRR_FR.LEV')")
+                return ERROR_EXIT_CODE
+            
+            parts = indicator.split('.', 1)  # Split on first dot only
+            dataflow_ref = parts[0]
+            series_key = parts[1]
+            etl_results = etl.run_ecb_etl(dataflow_ref, series_key, from_date, to_date)
+        elif source == 'fred':
+            etl_results = etl.run_fred_etl(indicator, api_key, from_date, to_date)
+        
+        # Report results
+        if etl_results['status'] == 'completed':
+            load_phase = etl_results['phases']['load']
+            loaded_records = load_phase['loaded_records']
+            indicators_count = loaded_records.get('indicators', 0)
+            data_points_count = loaded_records.get('data_points', 0)
+            
+            print(f"✅ Successfully processed {source.upper()} data for {indicator}")
+            print(f"📊 Loaded: {indicators_count} indicator(s), {data_points_count} data points")
+            
+            # Show data range if available
+            transform_phase = etl_results['phases']['transform']
+            if transform_phase.get('data_points_count', 0) > 0:
+                print(f"📈 Data points retrieved: {transform_phase['data_points_count']}")
+        else:
+            error_msg = etl_results.get('error', 'Unknown error')
+            print(f"❌ Failed to fetch {source.upper()} data for {indicator}")
+            print(f"Error: {error_msg}")
+            return ERROR_EXIT_CODE
+        
+        return SUCCESS_EXIT_CODE
+        
+    except ValidationError as e:
+        print(f"ERROR: {e}")
+        return ERROR_EXIT_CODE
+    except Exception as e:
+        logger.error(f"Unexpected error in fetch_economic_command: {e}", exc_info=True)
+        print(f"ERROR: Unexpected error: {e}")
+        return ERROR_EXIT_CODE
+
+
+def economic_info_command(indicator_id: str) -> int:
+    """
+    Handle economic-info command to show information about an economic indicator.
+    
+    Args:
+        indicator_id: Economic indicator ID
+        
+    Returns:
+        Exit code (0 for success, 1 for error)
+    """
+    try:
+        from ..database.manager import DatabaseManager
+        
+        print(f"Economic indicator information for: {indicator_id}")
+        
+        # Initialize database manager
+        db = DatabaseManager()
+        
+        # Get indicator info
+        indicator_info = db.get_economic_indicator_info(indicator_id)
+        
+        if not indicator_info['exists']:
+            print(f"Economic indicator '{indicator_id}' not found in database.")
+            print("Use 'fetch-economic' command to retrieve data first.")
+            return SUCCESS_EXIT_CODE
+        
+        # Display indicator information
+        indicator = indicator_info['indicator']
+        data_info = indicator_info['data_points']
+        thresholds = indicator_info.get('thresholds', [])
+        
+        print("=" * 60)
+        print(f"Name: {indicator['name']}")
+        print(f"Description: {indicator['description'] or 'N/A'}")
+        print(f"Source: {indicator['source'].upper()}")
+        print(f"Unit: {indicator['unit']}")
+        print(f"Frequency: {indicator['frequency']}")
+        print(f"Created: {indicator['created_at']}")
+        print(f"Last Updated: {indicator['updated_at']}")
+        
+        print(f"\n📊 Data Points:")
+        print(f"Total Records: {data_info['count']}")
+        if data_info['count'] > 0 and data_info['date_range']:
+            earliest_date, latest_date = data_info['date_range']
+            print(f"Date Range: {earliest_date} to {latest_date}")
+        
+        # Show thresholds if available
+        if thresholds:
+            print(f"\n🎯 Analysis Thresholds:")
+            for threshold in thresholds:
+                category = threshold['category'].title()
+                min_val = f"{threshold['min_value']:.2f}" if threshold['min_value'] is not None else "None"
+                max_val = f"{threshold['max_value']:.2f}" if threshold['max_value'] is not None else "None"
+                print(f"  • {category}: {min_val} to {max_val}")
+        
+        # Get recent data points
+        df = db.get_economic_data(indicator_id, from_date=None)
+        if not df.empty:
+            print(f"\n📈 Recent Data (last 10 points):")
+            print("-" * 30)
+            print(f"{'Date':<12} {'Value':<10}")
+            print("-" * 30)
+            
+            # Sort by date descending for recent data
+            recent_data = df.sort_values('date', ascending=False).head(10)
+            for _, row in recent_data.iterrows():
+                date_str = row['date'].strftime('%Y-%m-%d') if hasattr(row['date'], 'strftime') else str(row['date'])
+                value_str = f"{row['value']:.2f}" if row['value'] is not None else 'N/A'
+                print(f"{date_str:<12} {value_str:<10}")
+        
+        return SUCCESS_EXIT_CODE
+        
+    except Exception as e:
+        logger.error(f"Unexpected error in economic_info_command: {e}", exc_info=True)
+        print(f"ERROR: Unexpected error: {e}")
+        return ERROR_EXIT_CODE

@@ -15,7 +15,7 @@ from .exceptions import ValidationError
 # Constants
 MIN_TICKER_LENGTH = 1
 MAX_TICKER_LENGTH = 20
-VALID_TICKER_CHARS = r'^[A-Z0-9.-]+$'
+VALID_TICKER_CHARS = r'^[A-Z0-9.\-^]+$'
 
 
 def validate_ticker(ticker: str) -> str:
@@ -42,7 +42,7 @@ def validate_ticker(ticker: str) -> str:
     
     # Check format - allow alphanumeric and common ticker separators
     if not re.match(VALID_TICKER_CHARS, ticker):
-        raise ValidationError(f"Invalid ticker format: {ticker}. Only letters, numbers, dots, and hyphens are allowed")
+        raise ValidationError(f"Invalid ticker format: {ticker}. Only letters, numbers, dots, hyphens, and carets (^) are allowed")
     
     return ticker
 

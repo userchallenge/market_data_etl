@@ -22,7 +22,9 @@ from .commands import (
     load_transactions_command,
     fetch_portfolio_prices_command,
     fetch_portfolio_fundamentals_command,
-    portfolio_info_command
+    portfolio_info_command,
+    fetch_economic_command,
+    economic_info_command
 )
 
 
@@ -37,6 +39,9 @@ Examples:
   %(prog)s fetch-fundamentals --ticker MSFT
   %(prog)s fetch-financial-statements --ticker AAPL
   %(prog)s financial-summary --ticker AAPL --years 3
+  %(prog)s fetch-economic --source eurostat --indicator prc_hicp_midx --from 2024-01-01
+  %(prog)s fetch-economic --source fred --indicator UNRATE --from 2024-01-01 --to 2024-12-31 --api-key YOUR_KEY
+  %(prog)s economic-info --indicator prc_hicp_midx
   %(prog)s db-info --ticker VOLV-B.ST
   %(prog)s clear-database --all
   %(prog)s load-portfolio --file ./portfolios/my_portfolio.json
@@ -235,6 +240,50 @@ Environment Variables:
         help='Portfolio name'
     )
     
+    # fetch-economic command
+    economic_parser = subparsers.add_parser(
+        'fetch-economic',
+        help='Fetch economic data from Eurostat, ECB, or FRED APIs'
+    )
+    economic_parser.add_argument(
+        '--source',
+        required=True,
+        choices=['eurostat', 'ecb', 'fred'],
+        help='Data source (eurostat, ecb, fred)'
+    )
+    economic_parser.add_argument(
+        '--indicator',
+        required=True,
+        help='Economic indicator code/ID (e.g., prc_hicp_midx, UNRATE, FM.B.U2.EUR.4F.KR.MRR_FR.LEV)'
+    )
+    economic_parser.add_argument(
+        '--from',
+        dest='from_date',
+        required=True,
+        help='Start date in YYYY-MM-DD format'
+    )
+    economic_parser.add_argument(
+        '--to',
+        dest='to_date',
+        help='End date in YYYY-MM-DD format (required for ECB and FRED)'
+    )
+    economic_parser.add_argument(
+        '--api-key',
+        dest='api_key',
+        help='API key (required for FRED data source)'
+    )
+    
+    # economic-info command
+    economic_info_parser = subparsers.add_parser(
+        'economic-info',
+        help='Show information about an economic indicator'
+    )
+    economic_info_parser.add_argument(
+        '--indicator',
+        required=True,
+        help='Economic indicator ID'
+    )
+    
     return parser
 
 
@@ -298,6 +347,16 @@ def main() -> NoReturn:
             )
         elif args.command == 'portfolio-info':
             exit_code = portfolio_info_command(portfolio_name=args.portfolio)
+        elif args.command == 'fetch-economic':
+            exit_code = fetch_economic_command(
+                source=args.source,
+                indicator=args.indicator,
+                from_date=args.from_date,
+                to_date=args.to_date,
+                api_key=args.api_key
+            )
+        elif args.command == 'economic-info':
+            exit_code = economic_info_command(indicator_id=args.indicator)
         else:
             print(f"ERROR: Unknown command: {args.command}")
             exit_code = 1

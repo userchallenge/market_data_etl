@@ -6,7 +6,7 @@ like Yahoo Finance. No transformation or loading logic should be here.
 """
 
 from typing import Dict, Any, Optional
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 import yfinance as yf
 import pandas as pd
 
@@ -184,9 +184,11 @@ class PriceDataExtractor(DataFetcher):
                 yf_ticker = yf.Ticker(ticker)
                 
                 # Extract raw price data
+                # Add one day to end_date for exclusive range (yfinance requirement)
+                end_date_exclusive = end_date + timedelta(days=1)
                 raw_price_data = yf_ticker.history(
                     start=start_date.strftime('%Y-%m-%d'),
-                    end=end_date.strftime('%Y-%m-%d'),
+                    end=end_date_exclusive.strftime('%Y-%m-%d'),
                     auto_adjust=False,
                     prepost=False
                 )
@@ -210,3 +212,126 @@ class PriceDataExtractor(DataFetcher):
                 raise e
         
         return self._retry_with_backoff(_extract)
+
+
+class EconomicDataExtractor:
+    """
+    Pure extractor for economic data from various APIs.
+    
+    Responsibility: EXTRACT ONLY
+    - Fetch raw data from economic APIs
+    - Handle retry logic and errors
+    - Return raw data as-is (no transformation)
+    """
+    
+    def __init__(self):
+        from ..data.fetchers import EconomicDataFetcher
+        self.fetcher = EconomicDataFetcher()
+        self.logger = get_logger(__name__)
+    
+    def extract_eurostat_data(self, data_code: str, from_date: str) -> Dict[str, Any]:
+        """
+        Extract raw economic data from Eurostat API.
+        
+        Args:
+            data_code: Eurostat dataset code
+            from_date: Start date for data extraction
+            
+        Returns:
+            Dictionary with raw data from Eurostat (no transformation)
+            
+        Raises:
+            YahooFinanceError: If extraction fails after retries
+        """
+        self.logger.info(f"Extracting Eurostat data for {data_code}")
+        
+        try:
+            raw_data = self.fetcher.fetch_eurostat_json(data_code, from_date)
+            
+            if not raw_data.get('raw_data'):
+                raise YahooFinanceError(f"No data returned from Eurostat for {data_code}")
+            
+            self.logger.info(f"Successfully extracted Eurostat data for {data_code}")
+            return raw_data
+            
+        except Exception as e:
+            self.logger.error(f"Failed to extract Eurostat data for {data_code}: {e}")
+            raise e
+    
+    def extract_ecb_data(
+        self, 
+        dataflow_ref: str, 
+        series_key: str, 
+        from_date: str, 
+        to_date: str
+    ) -> Dict[str, Any]:
+        """
+        Extract raw economic data from ECB API.
+        
+        Args:
+            dataflow_ref: ECB dataflow reference
+            series_key: ECB series key
+            from_date: Start date for data extraction
+            to_date: End date for data extraction
+            
+        Returns:
+            Dictionary with raw data from ECB (no transformation)
+            
+        Raises:
+            YahooFinanceError: If extraction fails after retries
+        """
+        self.logger.info(f"Extracting ECB data for {dataflow_ref}/{series_key}")
+        
+        try:
+            raw_data = self.fetcher.fetch_ecb_json(dataflow_ref, series_key, from_date, to_date)
+            
+            if not raw_data.get('raw_data'):
+                raise YahooFinanceError(f"No data returned from ECB for {dataflow_ref}/{series_key}")
+            
+            self.logger.info(f"Successfully extracted ECB data for {dataflow_ref}/{series_key}")
+            return raw_data
+            
+        except Exception as e:
+            self.logger.error(f"Failed to extract ECB data for {dataflow_ref}/{series_key}: {e}")
+            raise e
+    
+    def extract_fred_data(
+        self, 
+        series_id: str, 
+        api_key: str, 
+        from_date: str, 
+        to_date: str
+    ) -> Dict[str, Any]:
+        """
+        Extract raw economic data from FRED API.
+        
+        Args:
+            series_id: FRED series ID
+            api_key: FRED API key
+            from_date: Start date for data extraction
+            to_date: End date for data extraction
+            
+        Returns:
+            Dictionary with raw data from FRED (no transformation)
+            
+        Raises:
+            YahooFinanceError: If extraction fails after retries
+        """
+        self.logger.info(f"Extracting FRED data for {series_id}")
+        
+        try:
+            raw_data = self.fetcher.fetch_fred_json(series_id, api_key, from_date, to_date)
+            
+            if not raw_data.get('raw_data'):
+                raise YahooFinanceError(f"No data returned from FRED for {series_id}")
+            
+            observations = raw_data['raw_data'].get('observations', [])
+            if not observations:
+                raise YahooFinanceError(f"No observations returned from FRED for {series_id}")
+            
+            self.logger.info(f"Successfully extracted FRED data for {series_id}: {len(observations)} observations")
+            return raw_data
+            
+        except Exception as e:
+            self.logger.error(f"Failed to extract FRED data for {series_id}: {e}")
+            raise e
