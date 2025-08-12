@@ -4,7 +4,7 @@
 config/
 tmp_output/
 *.sqlite
-*.csv
+csv_files/
 
 
 # Byte-compiled / optimized / DLL files
