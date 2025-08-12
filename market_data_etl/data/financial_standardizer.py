@@ -773,15 +773,17 @@ class FinancialStandardizer:
         inventory = balance.get('inventory')
         accounts_receivable = balance.get('accounts_receivable')
         
-        if total_assets and total_assets != 0 and total_revenue is not None:
+        if total_assets and total_assets != 0 and total_revenue is not None and total_revenue != 0:
             ratios['asset_turnover'] = total_revenue / total_assets
         
-        if inventory and inventory != 0 and cost_of_revenue is not None:
+        if inventory and inventory != 0 and cost_of_revenue is not None and cost_of_revenue != 0:
             ratios['inventory_turnover'] = cost_of_revenue / inventory
         
-        if accounts_receivable and accounts_receivable != 0 and total_revenue is not None:
-            ratios['receivables_turnover'] = total_revenue / accounts_receivable
-            ratios['days_sales_outstanding'] = 365 / ratios['receivables_turnover']
+        if accounts_receivable and accounts_receivable != 0 and total_revenue is not None and total_revenue != 0:
+            receivables_turnover = total_revenue / accounts_receivable
+            if receivables_turnover != 0:
+                ratios['receivables_turnover'] = receivables_turnover
+                ratios['days_sales_outstanding'] = 365 / receivables_turnover
         
         return ratios
     

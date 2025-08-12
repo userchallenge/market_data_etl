@@ -24,7 +24,9 @@ from .commands import (
     fetch_portfolio_fundamentals_command,
     portfolio_info_command,
     fetch_economic_command,
-    economic_info_command
+    economic_info_command,
+    load_price_csv_command,
+    generate_price_csv_template_command
 )
 
 
@@ -46,6 +48,8 @@ Examples:
   %(prog)s clear-database --all
   %(prog)s load-portfolio --file ./portfolios/my_portfolio.json
   %(prog)s fetch-portfolio-prices --portfolio "My Portfolio" --from 2024-01-01
+  %(prog)s generate-price-csv-template --ticker ^OMXS30 --output omxs30_template.csv
+  %(prog)s load-price-csv --file omxs30_data.csv --ticker ^OMXS30
   
 Environment Variables:
   MARKET_DATA_DB_PATH         Database file path (default: market_data.db)
@@ -284,6 +288,38 @@ Environment Variables:
         help='Economic indicator ID'
     )
     
+    # load-price-csv command
+    load_csv_parser = subparsers.add_parser(
+        'load-price-csv',
+        help='Load price data from CSV file'
+    )
+    load_csv_parser.add_argument(
+        '--file',
+        required=True,
+        help='Path to CSV file with price data'
+    )
+    load_csv_parser.add_argument(
+        '--ticker',
+        required=True,
+        help='Ticker symbol for the data'
+    )
+    
+    # generate-price-csv-template command
+    generate_csv_parser = subparsers.add_parser(
+        'generate-price-csv-template',
+        help='Generate CSV template for manual price data entry'
+    )
+    generate_csv_parser.add_argument(
+        '--ticker',
+        required=True,
+        help='Ticker symbol (for reference)'
+    )
+    generate_csv_parser.add_argument(
+        '--output',
+        required=True,
+        help='Output CSV file path'
+    )
+    
     return parser
 
 
@@ -357,6 +393,16 @@ def main() -> NoReturn:
             )
         elif args.command == 'economic-info':
             exit_code = economic_info_command(indicator_id=args.indicator)
+        elif args.command == 'load-price-csv':
+            exit_code = load_price_csv_command(
+                file_path=args.file,
+                ticker=args.ticker
+            )
+        elif args.command == 'generate-price-csv-template':
+            exit_code = generate_price_csv_template_command(
+                ticker=args.ticker,
+                output_file=args.output
+            )
         else:
             print(f"ERROR: Unknown command: {args.command}")
             exit_code = 1

@@ -1129,3 +1129,144 @@ def economic_info_command(indicator_id: str) -> int:
         logger.error(f"Unexpected error in economic_info_command: {e}", exc_info=True)
         print(f"ERROR: Unexpected error: {e}")
         return ERROR_EXIT_CODE
+
+
+def load_price_csv_command(file_path: str, ticker: str) -> int:
+    """
+    Handle load-price-csv command to import price data from CSV file.
+    
+    Args:
+        file_path: Path to CSV file with price data
+        ticker: Ticker symbol for the data
+        
+    Returns:
+        Exit code (0 for success, 1 for error)
+    """
+    try:
+        from ..database.manager import DatabaseManager
+        import pandas as pd
+        import os
+        
+        print(f"Loading price data from CSV for {ticker}")
+        print(f"File: {file_path}")
+        
+        # Validate file exists
+        if not os.path.exists(file_path):
+            print(f"ERROR: File not found: {file_path}")
+            return ERROR_EXIT_CODE
+        
+        # Initialize database
+        db = DatabaseManager()
+        
+        # Read and validate CSV
+        try:
+            df = pd.read_csv(file_path)
+            logger.info(f"Read CSV file with {len(df)} rows")
+        except Exception as e:
+            print(f"ERROR: Failed to read CSV file: {e}")
+            return ERROR_EXIT_CODE
+        
+        # Validate required columns
+        required_columns = ['date', 'open', 'high', 'low', 'close', 'volume']
+        missing_columns = [col for col in required_columns if col not in df.columns]
+        
+        if missing_columns:
+            print(f"ERROR: Missing required columns: {missing_columns}")
+            print(f"Required columns: {required_columns}")
+            print(f"Found columns: {list(df.columns)}")
+            return ERROR_EXIT_CODE
+        
+        # Convert date column to proper format
+        try:
+            df['date'] = pd.to_datetime(df['date']).dt.date
+        except Exception as e:
+            print(f"ERROR: Failed to parse date column: {e}")
+            return ERROR_EXIT_CODE
+        
+        # Validate data types and ranges
+        numeric_columns = ['open', 'high', 'low', 'close', 'volume']
+        for col in numeric_columns:
+            try:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+            except Exception as e:
+                print(f"ERROR: Failed to convert {col} to numeric: {e}")
+                return ERROR_EXIT_CODE
+        
+        # Check for missing values after conversion
+        if df[required_columns].isnull().any().any():
+            print("ERROR: Found missing or invalid values in required columns")
+            return ERROR_EXIT_CODE
+        
+        # Store data using existing infrastructure
+        inserted_count = db.store_price_data(ticker, df)
+        
+        print(f"✅ Successfully loaded {inserted_count} price records for {ticker}")
+        print("Operation completed successfully.")
+        
+        return SUCCESS_EXIT_CODE
+        
+    except Exception as e:
+        logger.error(f"Unexpected error in load_price_csv_command: {e}", exc_info=True)
+        print(f"ERROR: Unexpected error: {e}")
+        return ERROR_EXIT_CODE
+
+
+def generate_price_csv_template_command(ticker: str, output_file: str) -> int:
+    """
+    Generate a CSV template file for manual price data entry.
+    
+    Args:
+        ticker: Ticker symbol (for filename reference)
+        output_file: Output CSV file path
+        
+    Returns:
+        Exit code (0 for success, 1 for error)
+    """
+    try:
+        import pandas as pd
+        from datetime import date, timedelta
+        
+        logger = get_logger(__name__)
+        
+        print(f"Generating CSV template for {ticker}")
+        print(f"Output: {output_file}")
+        
+        # Create sample data with recent dates
+        today = date.today()
+        dates = [today - timedelta(days=i) for i in range(5, 0, -1)]
+        
+        # Create template DataFrame with example data
+        template_data = {
+            'date': [d.strftime('%Y-%m-%d') for d in dates],
+            'open': [100.00, 101.50, 99.75, 102.25, 103.10],
+            'high': [102.00, 103.25, 101.50, 104.00, 105.50],
+            'low': [99.50, 100.75, 98.25, 101.50, 102.75],
+            'close': [101.50, 99.75, 102.25, 103.10, 104.85],
+            'volume': [1000000, 1250000, 875000, 1500000, 1100000]
+        }
+        
+        df = pd.DataFrame(template_data)
+        
+        # Write CSV file
+        try:
+            df.to_csv(output_file, index=False)
+            logger.info(f"Generated CSV template at {output_file}")
+        except Exception as e:
+            print(f"ERROR: Failed to write CSV file: {e}")
+            return ERROR_EXIT_CODE
+        
+        print(f"✅ CSV template generated successfully!")
+        print(f"\nTemplate format:")
+        print(f"  - date: YYYY-MM-DD format")
+        print(f"  - open, high, low, close: Price values")
+        print(f"  - volume: Number of shares traded")
+        print(f"\nEdit the file with your data and use:")
+        print(f"  market-data-etl load-price-csv --file {output_file} --ticker {ticker}")
+        
+        return SUCCESS_EXIT_CODE
+        
+    except Exception as e:
+        logger = get_logger(__name__)
+        logger.error(f"Unexpected error in generate_price_csv_template_command: {e}", exc_info=True)
+        print(f"ERROR: Unexpected error: {e}")
+        return ERROR_EXIT_CODE

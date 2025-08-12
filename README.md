@@ -1,15 +1,24 @@
 # Market Data ETL
 
-[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.12.9+](https://img.shields.io/badge/python-3.12.9+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 Python package for extracting market data from Yahoo Finance and economic data from Eurostat/ECB/FRED into SQLite database.
 
 ## Installation
 
+**Requirements**: Python 3.12.9 or higher
+
 ```bash
 git clone https://github.com/your-username/market-data-etl.git
 cd market-data-etl
+
+# Create virtual environment with Python 3.12.9
+python3.12 -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Install dependencies
+pip install --upgrade pip
 pip install -e .
 ```
 

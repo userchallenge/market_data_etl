@@ -996,7 +996,18 @@ class DatabaseManager:
                 if not company:
                     return False
                 
-                # Delete all related data
+                # Delete portfolio-related data first (due to foreign key constraints)
+                session.query(Transaction).filter(
+                    Transaction.portfolio_id.in_(
+                        session.query(Portfolio.id).join(PortfolioHolding).filter(
+                            PortfolioHolding.company_id == company.id
+                        )
+                    )
+                ).delete(synchronize_session=False)
+                
+                session.query(PortfolioHolding).filter(PortfolioHolding.company_id == company.id).delete()
+                
+                # Delete all other related data
                 session.query(Price).filter(Price.company_id == company.id).delete()
                 session.query(IncomeStatement).filter(IncomeStatement.company_id == company.id).delete()
                 session.query(BalanceSheet).filter(BalanceSheet.company_id == company.id).delete()
@@ -1023,7 +1034,13 @@ class DatabaseManager:
         """
         try:
             with self.get_session() as session:
-                # Delete all data from all tables
+                # Delete all data from all tables in proper order (respecting foreign key constraints)
+                session.query(Transaction).delete()
+                session.query(PortfolioHolding).delete()
+                session.query(Portfolio).delete()
+                session.query(EconomicIndicatorData).delete()
+                session.query(EconomicIndicator).delete()
+                session.query(Threshold).delete()
                 session.query(Price).delete()
                 session.query(IncomeStatement).delete()
                 session.query(BalanceSheet).delete()
