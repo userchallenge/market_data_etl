@@ -995,10 +995,18 @@ def fetch_economic_command(
             print(f"ERROR: --to date is required for {source.upper()} data source")
             return ERROR_EXIT_CODE
         
-        if source == 'fred' and not api_key:
-            print("ERROR: --api-key is required for FRED data source")
-            print("Get your free API key from: https://fred.stlouisfed.org/docs/api/api_key.html")
-            return ERROR_EXIT_CODE
+        # For FRED, use environment variable if api_key not provided
+        if source == 'fred':
+            if not api_key:
+                from ..config import config
+                api_key = config.api.fred_api_key
+                if not api_key:
+                    print("ERROR: FRED API key required but not found")
+                    print("Either:")
+                    print("  1. Set FRED_API_KEY environment variable, or")
+                    print("  2. Use --api-key parameter")
+                    print("Get your free API key from: https://fred.stlouisfed.org/docs/api/api_key.html")
+                    return ERROR_EXIT_CODE
         
         print(f"Fetching {source.upper()} economic data for indicator: {indicator}")
         print(f"Date range: {from_date} to {to_date or 'present'}")
@@ -1053,12 +1061,12 @@ def fetch_economic_command(
         return ERROR_EXIT_CODE
 
 
-def economic_info_command(indicator_id: str) -> int:
+def economic_info_command(indicator_name: str) -> int:
     """
     Handle economic-info command to show information about an economic indicator.
     
     Args:
-        indicator_id: Economic indicator ID
+        indicator_name: Economic indicator name (standardized identifier)
         
     Returns:
         Exit code (0 for success, 1 for error)
@@ -1066,16 +1074,16 @@ def economic_info_command(indicator_id: str) -> int:
     try:
         from ..database.manager import DatabaseManager
         
-        print(f"Economic indicator information for: {indicator_id}")
+        print(f"Economic indicator information for: {indicator_name}")
         
         # Initialize database manager
         db = DatabaseManager()
         
         # Get indicator info
-        indicator_info = db.get_economic_indicator_info(indicator_id)
+        indicator_info = db.get_economic_indicator_info(indicator_name)
         
         if not indicator_info['exists']:
-            print(f"Economic indicator '{indicator_id}' not found in database.")
+            print(f"Economic indicator '{indicator_name}' not found in database.")
             print("Use 'fetch-economic' command to retrieve data first.")
             return SUCCESS_EXIT_CODE
         
@@ -1088,6 +1096,7 @@ def economic_info_command(indicator_id: str) -> int:
         print(f"Name: {indicator['name']}")
         print(f"Description: {indicator['description'] or 'N/A'}")
         print(f"Source: {indicator['source'].upper()}")
+        print(f"Source Identifier: {indicator['source_identifier']}")
         print(f"Unit: {indicator['unit']}")
         print(f"Frequency: {indicator['frequency']}")
         print(f"Created: {indicator['created_at']}")
@@ -1109,7 +1118,7 @@ def economic_info_command(indicator_id: str) -> int:
                 print(f"  • {category}: {min_val} to {max_val}")
         
         # Get recent data points
-        df = db.get_economic_data(indicator_id, from_date=None)
+        df = db.get_economic_data(indicator_name, from_date=None)
         if not df.empty:
             print(f"\n📈 Recent Data (last 10 points):")
             print("-" * 30)

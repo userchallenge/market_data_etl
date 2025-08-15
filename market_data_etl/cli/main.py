@@ -274,7 +274,7 @@ Environment Variables:
     economic_parser.add_argument(
         '--api-key',
         dest='api_key',
-        help='API key (required for FRED data source)'
+        help='API key (required for FRED data source, or set FRED_API_KEY environment variable)'
     )
     
     # economic-info command
@@ -392,7 +392,7 @@ def main() -> NoReturn:
                 api_key=args.api_key
             )
         elif args.command == 'economic-info':
-            exit_code = economic_info_command(indicator_id=args.indicator)
+            exit_code = economic_info_command(indicator_name=args.indicator)
         elif args.command == 'load-price-csv':
             exit_code = load_price_csv_command(
                 file_path=args.file,

@@ -32,6 +32,7 @@ cli/
 - Add new classes to existing unified files
 - Follow exact same patterns as price/fundamentals/economic
 - Maintain single import points for related functionality
+- Ensure changes works end-to-end from CLI-methods to saving in database, presenting results and update Readme.md to reflect changes
 
 ### 2. Separation of Concerns
 The codebase follows strict ETL separation:

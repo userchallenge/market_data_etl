@@ -29,32 +29,20 @@ pip install -e .
 - **Economic Data**: Indicators from Eurostat, ECB, FRED
 - **Portfolio Data**: Holdings and transactions
 
-## CLI Usage
+## CLI Commands
 
-### Price Data
-```bash
-market-data-etl fetch-prices --ticker AAPL --from 2024-01-01 --to 2024-01-31
-market-data-etl fetch-fundamentals --ticker MSFT
-market-data-etl db-info --ticker VOLV-B.ST
-```
+**Price Data**: `fetch-prices`, `load-price-csv`, `generate-price-csv-template`
+**Financial Data**: `fetch-financial-statements`, `financial-summary`, `fetch-fundamentals`
+**Economic Data**: `fetch-economic`, `economic-info`
+**Portfolio Management**: `load-portfolio`, `load-transactions`, `fetch-portfolio-prices`, `fetch-portfolio-fundamentals`, `portfolio-info`
+**Database & Utility**: `db-info`, `clear-database`
 
-### Economic Data
 ```bash
-market-data-etl fetch-economic --source eurostat --indicator prc_hicp_midx --from 2024-01-01
+# Examples
+market-data-etl fetch-prices --ticker AAPL --from 2024-01-01
 market-data-etl fetch-economic --source fred --indicator UNRATE --from 2024-01-01 --to 2024-12-31 --api-key YOUR_KEY
-market-data-etl economic-info --indicator prc_hicp_midx
-```
-
-### Portfolio Data
-```bash
-market-data-etl load-portfolio --file ./portfolios/my_portfolio.json
-market-data-etl fetch-portfolio-prices --portfolio "My Portfolio" --from 2024-01-01
-```
-
-### Database Management
-```bash
-market-data-etl clear-database --ticker AAPL
-market-data-etl clear-database --all --confirm
+market-data-etl economic-info --indicator inflation_monthly_us
+market-data-etl --help  # Show all commands
 ```
 
 ## Python API
@@ -94,6 +82,7 @@ Environment variables:
 export MARKET_DATA_DB_PATH="./market_data.db"
 export MARKET_DATA_LOG_LEVEL="INFO"
 export MARKET_DATA_MAX_RETRIES="5"
+export FRED_API_KEY="your_fred_api_key_here"
 ```
 
 ## Database

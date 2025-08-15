@@ -44,10 +44,24 @@ class RetryConfig:
 
 
 @dataclass
+class APIConfig:
+    """API configuration settings."""
+    fred_api_key: Optional[str] = None
+    
+    @classmethod
+    def from_env(cls) -> "APIConfig":
+        """Create config from environment variables."""
+        return cls(
+            fred_api_key=os.getenv("FRED_API_KEY")
+        )
+
+
+@dataclass
 class Config:
     """Main configuration class."""
     database: DatabaseConfig
     retry: RetryConfig
+    api: APIConfig
     log_level: str = "INFO"
     log_file: Optional[str] = None
     
@@ -57,6 +71,7 @@ class Config:
         return cls(
             database=DatabaseConfig.from_env(),
             retry=RetryConfig.from_env(),
+            api=APIConfig.from_env(),
             log_level=os.getenv("MARKET_DATA_LOG_LEVEL", "INFO"),
             log_file=os.getenv("MARKET_DATA_LOG_FILE")
         )
@@ -66,7 +81,8 @@ class Config:
         """Create default configuration."""
         return cls(
             database=DatabaseConfig(),
-            retry=RetryConfig()
+            retry=RetryConfig(),
+            api=APIConfig()
         )
 
 

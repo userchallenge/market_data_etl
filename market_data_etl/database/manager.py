@@ -1338,8 +1338,9 @@ class DatabaseManager:
         """
         try:
             with self.get_session() as session:
-                indicator_id = economic_data.get('indicator_id')
+                name = economic_data.get('name')
                 source = economic_data.get('source')
+                source_identifier = economic_data.get('source_identifier')
                 
                 # Get or create economic indicator
                 indicator = self._get_or_create_economic_indicator(session, economic_data)
@@ -1356,7 +1357,7 @@ class DatabaseManager:
                 }
                 
                 self.logger.info(
-                    f"Stored economic data for {source}/{indicator_id}: "
+                    f"Stored economic data for {name} ({source}/{source_identifier}): "
                     f"{storage_counts['data_points']} data points"
                 )
                 
@@ -1372,55 +1373,43 @@ class DatabaseManager:
         economic_data: Dict[str, Any]
     ) -> EconomicIndicator:
         """Get existing economic indicator or create new one with duplicate prevention."""
-        indicator_id = economic_data.get('indicator_id')
-        standardized_name = economic_data.get('standardized_name')
+        name = economic_data.get('name')  # standardized name
+        source = economic_data.get('source')
+        source_identifier = economic_data.get('source_identifier')
         
-        # Check if indicator already exists by indicator_id
+        if not name:
+            raise ValueError("Economic indicator 'name' (standardized identifier) is required")
+        
+        # Check if indicator already exists by name (standardized identifier)
         indicator = session.query(EconomicIndicator).filter(
-            EconomicIndicator.indicator_id == indicator_id
+            EconomicIndicator.name == name
         ).first()
         
         if indicator:
             # Update existing indicator
-            indicator.name = economic_data.get('name', indicator.name)
-            indicator.standardized_name = standardized_name or indicator.standardized_name
+            indicator.source = source or indicator.source
+            indicator.source_identifier = source_identifier or indicator.source_identifier
             indicator.description = economic_data.get('description', indicator.description)
             indicator.unit = economic_data.get('unit', indicator.unit)
             indicator.frequency = self._parse_frequency(economic_data.get('frequency', 'monthly'))
-            indicator.source = economic_data.get('source', indicator.source)
             indicator.updated_at = datetime.utcnow()
             
-            self.logger.debug(f"Updated existing economic indicator: {indicator_id}")
+            self.logger.debug(f"Updated existing economic indicator: {name}")
             return indicator
-        
-        # Check if standardized_name already exists (prevent duplicates by standardized name)
-        if standardized_name:
-            existing_by_std_name = session.query(EconomicIndicator).filter(
-                EconomicIndicator.standardized_name == standardized_name
-            ).first()
-            
-            if existing_by_std_name:
-                self.logger.warning(
-                    f"Indicator with standardized name '{standardized_name}' already exists "
-                    f"as '{existing_by_std_name.indicator_id}'. Skipping creation of '{indicator_id}'"
-                )
-                # Return existing indicator to prevent duplicate data types
-                return existing_by_std_name
         
         # Create new indicator
         indicator = EconomicIndicator(
-            indicator_id=indicator_id,
-            name=economic_data.get('name', ''),
-            standardized_name=standardized_name,
+            name=name,
+            source=source or '',
+            source_identifier=source_identifier or '',
             description=economic_data.get('description', ''),
             unit=economic_data.get('unit', ''),
-            frequency=self._parse_frequency(economic_data.get('frequency', 'monthly')),
-            source=economic_data.get('source', '')
+            frequency=self._parse_frequency(economic_data.get('frequency', 'monthly'))
         )
         session.add(indicator)
         session.flush()  # Get the ID
         
-        self.logger.debug(f"Created new economic indicator: {indicator_id} (standardized: {standardized_name})")
+        self.logger.debug(f"Created new economic indicator: {name} ({source}/{source_identifier})")
         
         return indicator
     
@@ -1484,24 +1473,24 @@ class DatabaseManager:
         }
         return frequency_map.get(frequency_str.lower(), Frequency.MONTHLY)
     
-    def get_economic_indicator_info(self, indicator_id: str) -> Dict[str, Any]:
+    def get_economic_indicator_info(self, indicator_name: str) -> Dict[str, Any]:
         """
         Get information about stored data for an economic indicator.
         
         Args:
-            indicator_id: Economic indicator ID
+            indicator_name: Economic indicator name (standardized identifier)
             
         Returns:
             Dictionary with indicator information
         """
         with self.get_session() as session:
             indicator = session.query(EconomicIndicator).filter(
-                EconomicIndicator.indicator_id == indicator_id
+                EconomicIndicator.name == indicator_name
             ).first()
             
             if not indicator:
                 return {
-                    'indicator_id': indicator_id,
+                    'indicator_name': indicator_name,
                     'exists': False,
                     'data_points': {}
                 }
@@ -1519,14 +1508,15 @@ class DatabaseManager:
             ).filter(EconomicIndicatorData.indicator_id == indicator.id).first()
             
             return {
-                'indicator_id': indicator_id,
+                'indicator_name': indicator_name,
                 'exists': True,
                 'indicator': {
                     'name': indicator.name,
+                    'source': indicator.source,
+                    'source_identifier': indicator.source_identifier,
                     'description': indicator.description,
                     'unit': indicator.unit,
                     'frequency': indicator.frequency.value,
-                    'source': indicator.source,
                     'created_at': indicator.created_at,
                     'updated_at': indicator.updated_at
                 },
@@ -1538,7 +1528,7 @@ class DatabaseManager:
     
     def get_economic_data(
         self,
-        indicator_id: str,
+        indicator_name: str,
         from_date: Optional[date] = None,
         to_date: Optional[date] = None
     ) -> pd.DataFrame:
@@ -1546,7 +1536,7 @@ class DatabaseManager:
         Retrieve economic data as DataFrame.
         
         Args:
-            indicator_id: Economic indicator ID
+            indicator_name: Economic indicator name (standardized identifier)
             from_date: Optional start date filter
             to_date: Optional end date filter
             
@@ -1555,7 +1545,7 @@ class DatabaseManager:
         """
         with self.get_session() as session:
             indicator = session.query(EconomicIndicator).filter(
-                EconomicIndicator.indicator_id == indicator_id
+                EconomicIndicator.name == indicator_name
             ).first()
             
             if not indicator:
@@ -1583,14 +1573,14 @@ class DatabaseManager:
     
     def store_thresholds(
         self,
-        indicator_id: str,
+        indicator_name: str,
         thresholds: List[Dict[str, Any]]
     ) -> int:
         """
         Store threshold definitions for an economic indicator.
         
         Args:
-            indicator_id: Economic indicator ID
+            indicator_name: Economic indicator name (standardized identifier)
             thresholds: List of threshold dictionaries
             
         Returns:
@@ -1599,11 +1589,11 @@ class DatabaseManager:
         try:
             with self.get_session() as session:
                 indicator = session.query(EconomicIndicator).filter(
-                    EconomicIndicator.indicator_id == indicator_id
+                    EconomicIndicator.name == indicator_name
                 ).first()
                 
                 if not indicator:
-                    raise DatabaseError(f"Economic indicator {indicator_id} not found")
+                    raise DatabaseError(f"Economic indicator {indicator_name} not found")
                 
                 # Clear existing thresholds
                 session.query(Threshold).filter(
@@ -1630,9 +1620,9 @@ class DatabaseManager:
                         continue
                 
                 session.commit()
-                self.logger.info(f"Stored {stored_count} thresholds for {indicator_id}")
+                self.logger.info(f"Stored {stored_count} thresholds for {indicator_name}")
                 return stored_count
                 
         except Exception as e:
-            self.logger.error(f"Failed to store thresholds for {indicator_id}: {e}")
+            self.logger.error(f"Failed to store thresholds for {indicator_name}: {e}")
             raise DatabaseError(f"Threshold storage failed: {e}") from e

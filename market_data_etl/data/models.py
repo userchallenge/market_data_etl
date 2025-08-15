@@ -505,13 +505,12 @@ class EconomicIndicator(Base):
     __tablename__ = 'economic_indicators'
     
     id = Column(Integer, primary_key=True)
-    indicator_id = Column(String(100), unique=True, nullable=False, index=True)
-    name = Column(String(200), nullable=False)
-    standardized_name = Column(String(100), unique=True, nullable=True, index=True)
-    description = Column(Text)
+    name = Column(String(100), unique=True, nullable=False, index=True)  # standardized name
+    source = Column(String(50), nullable=False)  # eurostat, ecb, fred
+    source_identifier = Column(String(100), nullable=False)  # original API identifier
+    description = Column(String(200), nullable=False)  # human-readable description
     unit = Column(String(50))
     frequency = Column(Enum(Frequency), nullable=False, default=Frequency.MONTHLY)
-    source = Column(String(50), nullable=False)  # eurostat, ecb, fred
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
