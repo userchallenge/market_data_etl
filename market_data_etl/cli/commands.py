@@ -952,111 +952,80 @@ def portfolio_info_command(portfolio_name: str) -> int:
         return ERROR_EXIT_CODE
 
 
-def fetch_economic_command(
-    source: str,
-    indicator: str,
+def fetch_economic_indicator_command(
+    name: str,
     from_date: str,
-    to_date: Optional[str] = None,
-    api_key: Optional[str] = None
+    to_date: Optional[str] = None
 ) -> int:
     """
-    Handle fetch-economic command to fetch economic data from various sources.
+    Handle fetch-economic-indicator command to fetch economic data using standardized names.
     
     Args:
-        source: Data source (eurostat, ecb, fred)
-        indicator: Indicator code or ID
+        name: Standardized economic indicator name (e.g., unemployment_monthly_rate_us)
         from_date: Start date in YYYY-MM-DD format
-        to_date: End date in YYYY-MM-DD format (required for ECB and FRED)
-        api_key: API key (required for FRED)
+        to_date: End date in YYYY-MM-DD format (optional)
         
     Returns:
         Exit code (0 for success, 1 for error)
     """
     try:
-        # Import economic ETL components
         from ..etl.load import EconomicETLOrchestrator
+        from ..config import config
         
         # Validate dates
-        start_date_obj = validate_date_string(from_date, "from_date")
+        validate_date_string(from_date, "from_date")
         if to_date:
-            end_date_obj = validate_date_string(to_date, "to_date")
-            validate_date_range(start_date_obj, end_date_obj)
+            validate_date_string(to_date, "to_date")
         
-        # Validate source
-        valid_sources = ['eurostat', 'ecb', 'fred']
-        if source.lower() not in valid_sources:
-            print(f"ERROR: Invalid source '{source}'. Valid sources: {', '.join(valid_sources)}")
+        # Map name to source info
+        mapping = _get_indicator_reverse_mapping()
+        if name not in mapping:
+            print(f"ERROR: Unknown indicator '{name}'")
+            print(f"Available: {', '.join(sorted(mapping.keys()))}")
             return ERROR_EXIT_CODE
         
-        source = source.lower()
+        source, source_identifier, description = mapping[name]
         
-        # Source-specific validation
+        # Validate required to_date for ECB/FRED
         if source in ['ecb', 'fred'] and not to_date:
-            print(f"ERROR: --to date is required for {source.upper()} data source")
+            print(f"ERROR: --to required for {source.upper()} indicators")
             return ERROR_EXIT_CODE
         
-        # For FRED, use environment variable if api_key not provided
+        # Get FRED API key if needed
+        api_key = None
         if source == 'fred':
+            api_key = config.api.fred_api_key
             if not api_key:
-                from ..config import config
-                api_key = config.api.fred_api_key
-                if not api_key:
-                    print("ERROR: FRED API key required but not found")
-                    print("Either:")
-                    print("  1. Set FRED_API_KEY environment variable, or")
-                    print("  2. Use --api-key parameter")
-                    print("Get your free API key from: https://fred.stlouisfed.org/docs/api/api_key.html")
-                    return ERROR_EXIT_CODE
-        
-        print(f"Fetching {source.upper()} economic data for indicator: {indicator}")
-        print(f"Date range: {from_date} to {to_date or 'present'}")
-        
-        # Initialize ETL orchestrator
-        etl = EconomicETLOrchestrator()
-        
-        # Run appropriate ETL pipeline based on source
-        if source == 'eurostat':
-            etl_results = etl.run_eurostat_etl(indicator, from_date)
-        elif source == 'ecb':
-            # ECB requires parsing the indicator into dataflow_ref and series_key
-            if '.' not in indicator:
-                print("ERROR: ECB indicator must be in format 'dataflow_ref.series_key' (e.g., 'FM.B.U2.EUR.4F.KR.MRR_FR.LEV')")
+                print("ERROR: Set FRED_API_KEY environment variable")
                 return ERROR_EXIT_CODE
-            
-            parts = indicator.split('.', 1)  # Split on first dot only
-            dataflow_ref = parts[0]
-            series_key = parts[1]
-            etl_results = etl.run_ecb_etl(dataflow_ref, series_key, from_date, to_date)
+        
+        print(f"Fetching {description}")
+        
+        # Run ETL pipeline
+        etl = EconomicETLOrchestrator()
+        if source == 'eurostat':
+            results = etl.run_eurostat_etl(source_identifier, from_date)
+        elif source == 'ecb':
+            parts = source_identifier.split('.', 1)
+            results = etl.run_ecb_etl(parts[0], parts[1], from_date, to_date)
         elif source == 'fred':
-            etl_results = etl.run_fred_etl(indicator, api_key, from_date, to_date)
+            results = etl.run_fred_etl(source_identifier, api_key, from_date, to_date)
         
         # Report results
-        if etl_results['status'] == 'completed':
-            load_phase = etl_results['phases']['load']
-            loaded_records = load_phase['loaded_records']
-            indicators_count = loaded_records.get('indicators', 0)
-            data_points_count = loaded_records.get('data_points', 0)
-            
-            print(f"✅ Successfully processed {source.upper()} data for {indicator}")
-            print(f"📊 Loaded: {indicators_count} indicator(s), {data_points_count} data points")
-            
-            # Show data range if available
-            transform_phase = etl_results['phases']['transform']
-            if transform_phase.get('data_points_count', 0) > 0:
-                print(f"📈 Data points retrieved: {transform_phase['data_points_count']}")
+        if results['status'] == 'completed':
+            load_stats = results['phases']['load']['loaded_records']
+            print(f"✅ Success: {load_stats.get('data_points', 0)} data points")
+            return SUCCESS_EXIT_CODE
         else:
-            error_msg = etl_results.get('error', 'Unknown error')
-            print(f"❌ Failed to fetch {source.upper()} data for {indicator}")
-            print(f"Error: {error_msg}")
+            print(f"❌ Failed: {results.get('error_message', 'Unknown error')}")
             return ERROR_EXIT_CODE
-        
-        return SUCCESS_EXIT_CODE
         
     except ValidationError as e:
         print(f"ERROR: {e}")
         return ERROR_EXIT_CODE
     except Exception as e:
-        logger.error(f"Unexpected error in fetch_economic_command: {e}", exc_info=True)
+        logger = get_logger(__name__)
+        logger.error(f"Unexpected error in fetch_economic_indicator_command: {e}", exc_info=True)
         print(f"ERROR: Unexpected error: {e}")
         return ERROR_EXIT_CODE
 
@@ -1279,3 +1248,17 @@ def generate_price_csv_template_command(ticker: str, output_file: str) -> int:
         logger.error(f"Unexpected error in generate_price_csv_template_command: {e}", exc_info=True)
         print(f"ERROR: Unexpected error: {e}")
         return ERROR_EXIT_CODE
+
+
+def _get_indicator_reverse_mapping() -> Dict[str, tuple]:
+    """Get reverse mapping from standardized names to source info."""
+    # Mapping from CSV data provided by user
+    return {
+        'inflation_monthly_euro': ('eurostat', 'prc_hicp_mmor', 'Eurozone Inflation (HICP, monthly rate of change)'),
+        'unemployment_rate_monthly_euro': ('eurostat', 'ei_lmhr_m', 'Eurozone Unemployment Rate'),
+        'interest_rate_change_day_euro': ('ecb', 'FM.B.U2.EUR.4F.KR.MRR_FR.LEV', 'Eurozone Interest Rate (Main Refinancing Operations)'),
+        'interest_rate_monthly_euro': ('ecb', 'FM.B.U2.EUR.4F.KR.MRR_FR.LEV', 'Eurozone Monthly Interest Rate (Main Refinancing Operations)'),
+        'unemployment_monthly_rate_us': ('fred', 'UNRATE', 'US Unemployment Rate'),
+        'inflation_index_monthly_us': ('fred', 'CPIAUCSL', 'US Consumer Price Index (CPI)'),
+        'interest_rate_monthly_us': ('fred', 'DFF', 'US Federal Funds Rate'),
+    }

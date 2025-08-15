@@ -13,18 +13,16 @@ from ..utils.logging import setup_logging
 from ..config import config
 from .commands import (
     fetch_prices_command, 
-    fetch_fundamentals_command, 
+ 
     db_info_command,
     fetch_financial_statements_command,
-    financial_summary_command,
     clear_database_command,
     load_portfolio_command,
     load_transactions_command,
     fetch_portfolio_prices_command,
     fetch_portfolio_fundamentals_command,
     portfolio_info_command,
-    fetch_economic_command,
-    economic_info_command,
+    fetch_economic_indicator_command,
     load_price_csv_command,
     generate_price_csv_template_command
 )
@@ -38,12 +36,9 @@ def create_parser() -> argparse.ArgumentParser:
         epilog="""
 Examples:
   %(prog)s fetch-prices --ticker AAPL --from 2024-01-01 --to 2024-01-31
-  %(prog)s fetch-fundamentals --ticker MSFT
   %(prog)s fetch-financial-statements --ticker AAPL
-  %(prog)s financial-summary --ticker AAPL --years 3
-  %(prog)s fetch-economic --source eurostat --indicator prc_hicp_midx --from 2024-01-01
-  %(prog)s fetch-economic --source fred --indicator UNRATE --from 2024-01-01 --to 2024-12-31 --api-key YOUR_KEY
-  %(prog)s economic-info --indicator prc_hicp_midx
+  %(prog)s fetch-economic-indicator --name unemployment_monthly_rate_us --from 2024-01-01 --to 2024-12-31
+  %(prog)s fetch-economic-indicator --name inflation_monthly_euro --from 2024-01-01
   %(prog)s db-info --ticker VOLV-B.ST
   %(prog)s clear-database --all
   %(prog)s load-portfolio --file ./portfolios/my_portfolio.json
@@ -98,17 +93,6 @@ Environment Variables:
         help='End date in YYYY-MM-DD format (defaults to today)'
     )
     
-    # fetch-fundamentals command
-    fundamentals_parser = subparsers.add_parser(
-        'fetch-fundamentals',
-        help='Fetch fundamental data for a ticker'
-    )
-    fundamentals_parser.add_argument(
-        '--ticker',
-        required=True,
-        help='Stock ticker symbol (e.g., AAPL, ERIC-B.ST)'
-    )
-    
     # fetch-financial-statements command
     financial_parser = subparsers.add_parser(
         'fetch-financial-statements',
@@ -123,23 +107,6 @@ Environment Variables:
         '--no-quarterly',
         action='store_true',
         help='Fetch annual data only (exclude quarterly data)'
-    )
-    
-    # financial-summary command
-    summary_parser = subparsers.add_parser(
-        'financial-summary',
-        help='Show comprehensive financial summary for a company'
-    )
-    summary_parser.add_argument(
-        '--ticker',
-        required=True,
-        help='Stock ticker symbol (e.g., AAPL, ERIC-B.ST)'
-    )
-    summary_parser.add_argument(
-        '--years',
-        type=int,
-        default=5,
-        help='Number of recent years to include (default: 5)'
     )
     
     # db-info command
@@ -244,21 +211,15 @@ Environment Variables:
         help='Portfolio name'
     )
     
-    # fetch-economic command
+    # fetch-economic-indicator command
     economic_parser = subparsers.add_parser(
-        'fetch-economic',
-        help='Fetch economic data from Eurostat, ECB, or FRED APIs'
+        'fetch-economic-indicator',
+        help='Fetch economic data using standardized indicator names'
     )
     economic_parser.add_argument(
-        '--source',
+        '--name',
         required=True,
-        choices=['eurostat', 'ecb', 'fred'],
-        help='Data source (eurostat, ecb, fred)'
-    )
-    economic_parser.add_argument(
-        '--indicator',
-        required=True,
-        help='Economic indicator code/ID (e.g., prc_hicp_midx, UNRATE, FM.B.U2.EUR.4F.KR.MRR_FR.LEV)'
+        help='Standardized economic indicator name (e.g., unemployment_monthly_rate_us, inflation_monthly_euro)'
     )
     economic_parser.add_argument(
         '--from',
@@ -269,24 +230,9 @@ Environment Variables:
     economic_parser.add_argument(
         '--to',
         dest='to_date',
-        help='End date in YYYY-MM-DD format (required for ECB and FRED)'
-    )
-    economic_parser.add_argument(
-        '--api-key',
-        dest='api_key',
-        help='API key (required for FRED data source, or set FRED_API_KEY environment variable)'
+        help='End date in YYYY-MM-DD format'
     )
     
-    # economic-info command
-    economic_info_parser = subparsers.add_parser(
-        'economic-info',
-        help='Show information about an economic indicator'
-    )
-    economic_info_parser.add_argument(
-        '--indicator',
-        required=True,
-        help='Economic indicator ID'
-    )
     
     # load-price-csv command
     load_csv_parser = subparsers.add_parser(
@@ -344,17 +290,10 @@ def main() -> NoReturn:
                 from_date=args.from_date,
                 to_date=args.to_date
             )
-        elif args.command == 'fetch-fundamentals':
-            exit_code = fetch_fundamentals_command(ticker=args.ticker)
         elif args.command == 'fetch-financial-statements':
             exit_code = fetch_financial_statements_command(
                 ticker=args.ticker,
                 quarterly=not args.no_quarterly
-            )
-        elif args.command == 'financial-summary':
-            exit_code = financial_summary_command(
-                ticker=args.ticker,
-                years=args.years
             )
         elif args.command == 'db-info':
             exit_code = db_info_command(ticker=args.ticker)
@@ -383,16 +322,12 @@ def main() -> NoReturn:
             )
         elif args.command == 'portfolio-info':
             exit_code = portfolio_info_command(portfolio_name=args.portfolio)
-        elif args.command == 'fetch-economic':
-            exit_code = fetch_economic_command(
-                source=args.source,
-                indicator=args.indicator,
+        elif args.command == 'fetch-economic-indicator':
+            exit_code = fetch_economic_indicator_command(
+                name=args.name,
                 from_date=args.from_date,
-                to_date=args.to_date,
-                api_key=args.api_key
+                to_date=args.to_date
             )
-        elif args.command == 'economic-info':
-            exit_code = economic_info_command(indicator_name=args.indicator)
         elif args.command == 'load-price-csv':
             exit_code = load_price_csv_command(
                 file_path=args.file,

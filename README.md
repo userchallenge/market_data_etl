@@ -40,8 +40,9 @@ pip install -e .
 ```bash
 # Examples
 market-data-etl fetch-prices --ticker AAPL --from 2024-01-01
-market-data-etl fetch-economic --source fred --indicator UNRATE --from 2024-01-01 --to 2024-12-31 --api-key YOUR_KEY
-market-data-etl economic-info --indicator inflation_monthly_us
+market-data-etl fetch-economic --source fred --indicator UNRATE --from 2024-01-01 --to 2024-12-31  # Uses FRED_API_KEY env var
+market-data-etl fetch-economic --source eurostat --indicator prc_hicp_mmor --from 2024-01-01
+market-data-etl economic-info --indicator unemployment_monthly_rate_us
 market-data-etl --help  # Show all commands
 ```
 
@@ -60,8 +61,8 @@ db.store_price_data("AAPL", price_data)
 
 # Economic data
 economic_etl = EconomicETLOrchestrator(db)
-results = economic_etl.run_eurostat_etl("prc_hicp_midx", "2020-01-01")
-df = db.get_economic_data("prc_hicp_midx")
+results = economic_etl.run_eurostat_etl("prc_hicp_mmor", "2020-01-01")
+df = db.get_economic_data("inflation_monthly_euro")
 ```
 
 ## Common Economic Indicators

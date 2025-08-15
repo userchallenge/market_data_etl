@@ -537,15 +537,41 @@ class EconomicETLOrchestrator:
             # TRANSFORM phase
             self.logger.info(f"Transform phase: transforming FRED data for {series_id}")
             transformed_data = self.transformer.transform_fred_data(raw_data)
-            etl_results['phases']['transform'] = {
-                'status': 'completed',
-                'data_points_count': len(transformed_data.get('data_points', [])),
-                'timestamp': transformed_data.get('transformation_timestamp')
-            }
+            
+            # Handle case where transform returns multiple indicators (e.g., CPI index + rate)
+            if isinstance(transformed_data, list):
+                total_data_points = sum(len(data.get('data_points', [])) for data in transformed_data)
+                etl_results['phases']['transform'] = {
+                    'status': 'completed',
+                    'data_points_count': total_data_points,
+                    'indicators_count': len(transformed_data),
+                    'timestamp': transformed_data[0].get('transformation_timestamp') if transformed_data else None
+                }
+            else:
+                etl_results['phases']['transform'] = {
+                    'status': 'completed',
+                    'data_points_count': len(transformed_data.get('data_points', [])),
+                    'timestamp': transformed_data.get('transformation_timestamp')
+                }
             
             # LOAD phase
             self.logger.info(f"Load phase: loading FRED data for {series_id}")
-            load_results = self.loader.load_economic_data(transformed_data)
+            if isinstance(transformed_data, list):
+                # Load multiple indicators
+                all_load_results = []
+                for data in transformed_data:
+                    load_result = self.loader.load_economic_data(data)
+                    all_load_results.append(load_result)
+                
+                # Combine results
+                total_loaded = sum(result.get('loaded_records', {}).get('data_points', 0) for result in all_load_results)
+                load_results = {
+                    'loaded_records': {'data_points': total_loaded, 'indicators': len(transformed_data)},
+                    'errors': [],
+                    'loading_timestamp': all_load_results[0].get('loading_timestamp') if all_load_results else None
+                }
+            else:
+                load_results = self.loader.load_economic_data(transformed_data)
             etl_results['phases']['load'] = {
                 'status': 'completed',
                 'loaded_records': load_results.get('loaded_records', {}),

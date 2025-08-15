@@ -366,12 +366,14 @@ class EconomicDataTransformer:
             name = self._get_eurostat_indicator_name(data_code)
             standardized_name = self._get_standardized_name('eurostat', data_code, name)
             
+            # Get standardized mapping for this indicator
+            mapping = self._get_indicator_mapping('eurostat', data_code)
+            
             transformed_data = {
-                'source': 'eurostat',
-                'indicator_id': data_code,
-                'name': name,
-                'standardized_name': standardized_name,
-                'description': f'Eurostat indicator: {data_code}',
+                'name': mapping['name'],
+                'source': mapping['source'], 
+                'source_identifier': mapping['source_identifier'],
+                'description': mapping['description'],
                 'unit': self._extract_eurostat_unit(json_data),
                 'frequency': self._extract_eurostat_frequency(json_data),
                 'transformation_timestamp': datetime.utcnow().isoformat(),
@@ -410,12 +412,14 @@ class EconomicDataTransformer:
             name = self._get_ecb_indicator_name(dataflow_ref, series_key)
             standardized_name = self._get_standardized_name('ecb', indicator_id, name)
             
+            # Get standardized mapping for this indicator
+            mapping = self._get_indicator_mapping('ecb', indicator_id)
+            
             transformed_data = {
-                'source': 'ecb',
-                'indicator_id': indicator_id,
-                'name': name,
-                'standardized_name': standardized_name,
-                'description': f'ECB indicator: {indicator_id}',
+                'name': mapping['name'],
+                'source': mapping['source'],
+                'source_identifier': mapping['source_identifier'], 
+                'description': mapping['description'],
                 'unit': self._extract_ecb_unit(json_data),
                 'frequency': 'monthly',  # Most ECB data is monthly
                 'transformation_timestamp': datetime.utcnow().isoformat(),
@@ -440,6 +444,7 @@ class EconomicDataTransformer:
             Dictionary with transformed, standardized economic data
         """
         series_id = raw_data.get('series_id')
+        requested_name = raw_data.get('requested_name')  # From CLI command
         self.logger.info(f"Transforming FRED data for {series_id}")
         
         try:
@@ -448,16 +453,50 @@ class EconomicDataTransformer:
             # Extract time series data from FRED JSON structure
             data_points = self._parse_fred_json(json_data)
             
-            name = self._get_fred_indicator_name(series_id)
-            standardized_name = self._get_standardized_name('fred', series_id, name)
+            # Special handling for CPI data - calculate both index and monthly rate
+            if series_id == 'CPIAUCSL':
+                # Calculate monthly rate of change
+                rate_data_points = self._calculate_monthly_rate_change(data_points)
+                
+                # Store both the index and the calculated monthly rate
+                transformed_data = [
+                    {
+                        'name': 'inflation_index_monthly_us',
+                        'source': 'fred',
+                        'source_identifier': series_id,
+                        'description': 'US Consumer Price Index (CPI)', 
+                        'unit': 'index',
+                        'frequency': 'monthly',
+                        'transformation_timestamp': datetime.utcnow().isoformat(),
+                        'data_points': data_points
+                    },
+                    {
+                        'name': 'inflation_monthly_us',
+                        'source': 'fred',
+                        'source_identifier': series_id,
+                        'description': 'US CPI (Monthly Rate of Change)', 
+                        'unit': 'percent',
+                        'frequency': 'monthly',
+                        'transformation_timestamp': datetime.utcnow().isoformat(),
+                        'data_points': rate_data_points
+                    }
+                ]
+                
+                self.logger.info(f"Transformed FRED CPI data: {len(data_points)} index points, {len(rate_data_points)} rate points")
+                return transformed_data
+            else:
+                # Get standardized mapping for other indicators
+                mapping = self._get_indicator_mapping('fred', series_id)
+                name = mapping['name']
+                description = mapping['description']
+                unit = self._extract_fred_unit(series_id)
             
             transformed_data = {
-                'source': 'fred',
-                'indicator_id': series_id,
                 'name': name,
-                'standardized_name': standardized_name,
-                'description': f'FRED indicator: {series_id}',
-                'unit': self._extract_fred_unit(series_id),
+                'source': 'fred',
+                'source_identifier': series_id,
+                'description': description, 
+                'unit': unit,
                 'frequency': 'monthly',  # FRED data requested as monthly
                 'transformation_timestamp': datetime.utcnow().isoformat(),
                 'data_points': data_points
@@ -741,3 +780,113 @@ class EconomicDataTransformer:
             'A': 'yearly'
         }
         return mapping.get(frequency_code, 'monthly')
+    
+    def _get_indicator_mapping(self, source: str, source_identifier: str) -> Dict[str, str]:
+        """Get standardized mapping for economic indicators."""
+        # Complete mapping from CSV data provided by user
+        mapping_table = {
+            ('eurostat', 'prc_hicp_mmor'): {
+                'name': 'inflation_monthly_euro',
+                'source': 'eurostat',
+                'source_identifier': 'prc_hicp_mmor',
+                'description': 'Eurozone Inflation (HICP, monthly rate of change)'
+            },
+            ('eurostat', 'ei_lmhr_m'): {
+                'name': 'unemployment_rate_monthly_euro',
+                'source': 'eurostat', 
+                'source_identifier': 'ei_lmhr_m',
+                'description': 'Eurozone Unemployment Rate'
+            },
+            ('ecb', 'FM.B.U2.EUR.4F.KR.MRR_FR.LEV'): {
+                'name': 'interest_rate_change_day_euro',
+                'source': 'ecb',
+                'source_identifier': 'FM; B.U2.EUR.4F.KR.MRR_FR.LEV',
+                'description': 'Eurozone Interest Rate (Main Refinancing Operations)'
+            },
+            # Note: Both ECB indicators map to same source_identifier but different names
+            ('ecb', 'FM; B.U2.EUR.4F.KR.MRR_FR.LEV'): {
+                'name': 'interest_rate_monthly_euro',
+                'source': 'ecb',
+                'source_identifier': 'FM; B.U2.EUR.4F.KR.MRR_FR.LEV', 
+                'description': 'Eurozone Monthly Interest Rate (Main Refinancing Operations)'
+            },
+            ('fred', 'UNRATE'): {
+                'name': 'unemployment_monthly_rate_us',
+                'source': 'fred',
+                'source_identifier': 'UNRATE',
+                'description': 'US Unemployment Rate'
+            },
+            ('fred', 'CPIAUCSL'): {
+                'name': 'inflation_index_monthly_us',
+                'source': 'fred',
+                'source_identifier': 'CPIAUCSL',
+                'description': 'US Consumer Price Index (CPI)'
+            },
+            ('fred', 'DFF'): {
+                'name': 'interest_rate_monthly_us',
+                'source': 'fred',
+                'source_identifier': 'DFF',
+                'description': 'US Federal Funds Rate'
+            },
+        }
+        
+        # Try exact match first
+        key = (source, source_identifier)
+        if key in mapping_table:
+            return mapping_table[key]
+            
+        # For ECB, handle the different formats that might be used
+        if source == 'ecb':
+            # Try with semicolon format
+            ecb_key_semicolon = (source, source_identifier.replace('.', '; ', 1))
+            if ecb_key_semicolon in mapping_table:
+                return mapping_table[ecb_key_semicolon]
+            
+            # Try with dot format  
+            ecb_key_dot = (source, source_identifier.replace('; ', '.', 1))
+            if ecb_key_dot in mapping_table:
+                # Return the mapping but with correct source_identifier format
+                mapping = mapping_table[ecb_key_dot].copy()
+                mapping['source_identifier'] = 'FM; B.U2.EUR.4F.KR.MRR_FR.LEV'
+                return mapping
+        
+        # Fallback for unmapped indicators
+        self.logger.warning(f"No standardized mapping found for {source}/{source_identifier}")
+        return {
+            'name': f'{source}_{source_identifier}'.replace('.', '_').replace(';', '_').lower(),
+            'source': source,
+            'source_identifier': source_identifier,
+            'description': f'{source.upper()} indicator: {source_identifier}'
+        }
+    
+    def _calculate_monthly_rate_change(self, data_points: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Calculate month-over-month percentage change from index values.
+        
+        Args:
+            data_points: List of data points with 'date' and 'value' keys
+            
+        Returns:
+            List of data points with monthly rate of change values
+        """
+        if len(data_points) < 2:
+            return []
+        
+        # Sort by date to ensure correct order
+        sorted_points = sorted(data_points, key=lambda x: x['date'])
+        rate_changes = []
+        
+        for i in range(1, len(sorted_points)):
+            current = sorted_points[i]
+            previous = sorted_points[i-1]
+            
+            if previous['value'] and previous['value'] != 0:
+                # Calculate month-over-month percentage change
+                rate_change = ((current['value'] - previous['value']) / previous['value']) * 100
+                
+                rate_changes.append({
+                    'date': current['date'],
+                    'value': round(rate_change, 4)
+                })
+        
+        return rate_changes
