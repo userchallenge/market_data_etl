@@ -1,0 +1,6 @@
+id,portfolio_id,company_id,sector,fund_type,notes,created_at
+1,1,1,Financial Services,,Added from portfolio config: Skandinaviska Enskilda Banken AB (SEB) C,2025-08-11 08:32:11.998486
+2,1,2,Real Estate,,Added from portfolio config: Realty Income Corporation,2025-08-11 08:32:11.999235
+4,1,4,Technology,,"Added from portfolio config: Advanced Micro Devices, Inc.",2025-08-11 08:32:12.000830
+5,1,5,Technology,,Added from portfolio config: BE Semiconductor Industries N.V.,2025-08-11 08:32:12.001433
+6,1,6,,equity,Added from portfolio config: AMF Aktiefond Global,2025-08-11 08:32:12.002015

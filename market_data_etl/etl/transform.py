@@ -93,7 +93,9 @@ class FinancialDataTransformer:
                 'ticker': ticker,
                 'transformed_data': pd.DataFrame(),
                 'transformation_timestamp': datetime.utcnow().isoformat(),
-                'record_count': 0
+                'record_count': 0,
+                'instrument_type': raw_price_data.get('instrument_type'),
+                'instrument_info': raw_price_data.get('instrument_info')
             }
         
         # Transform the DataFrame
@@ -105,7 +107,9 @@ class FinancialDataTransformer:
             'end_date': raw_price_data.get('end_date'), 
             'transformation_timestamp': datetime.utcnow().isoformat(),
             'transformed_data': transformed_df,
-            'record_count': len(transformed_df)
+            'record_count': len(transformed_df),
+            'instrument_type': raw_price_data.get('instrument_type'),
+            'instrument_info': raw_price_data.get('instrument_info')
         }
     
     def _transform_company_info(self, raw_data: Dict[str, Any]) -> Dict[str, Any]:

@@ -16,6 +16,7 @@ import json
 from ..config import config
 from ..utils.logging import get_logger
 from ..utils.exceptions import YahooFinanceError
+from .models import InstrumentType
 
 
 class DataFetcher:
@@ -95,6 +96,73 @@ class DataFetcher:
         error_msg += f". Last error: {last_error}"
         
         raise YahooFinanceError(error_msg)
+
+
+# =============================================================================
+# INSTRUMENT TYPE DETECTION FUNCTIONS
+# =============================================================================
+
+def detect_from_symbol_pattern(ticker_symbol: str) -> InstrumentType:
+    """
+    Fallback detection using symbol patterns when Yahoo data unavailable.
+    
+    Args:
+        ticker_symbol: The ticker symbol to analyze
+        
+    Returns:
+        InstrumentType based on symbol pattern analysis
+    """
+    symbol = ticker_symbol.upper().strip()
+    
+    # Index patterns
+    if symbol.startswith('^'):
+        return InstrumentType.INDEX
+    
+    # Commodity/Futures patterns  
+    if symbol.endswith('=F'):
+        return InstrumentType.COMMODITY
+    
+    # Currency patterns
+    if symbol.endswith('=X'):
+        return InstrumentType.CURRENCY
+    
+    # Cryptocurrency patterns
+    if '-USD' in symbol or '-BTC' in symbol or '-ETH' in symbol:
+        return InstrumentType.CRYPTOCURRENCY
+    
+    # Default to unknown if pattern unclear
+    return InstrumentType.UNKNOWN
+
+
+def detect_instrument_type(ticker_symbol: str, yahoo_info: Dict[str, Any]) -> InstrumentType:
+    """
+    Detect instrument type using Yahoo Finance quoteType with fallback logic.
+    
+    Args:
+        ticker_symbol: The ticker symbol being analyzed
+        yahoo_info: Dictionary containing Yahoo Finance info data
+        
+    Returns:
+        InstrumentType detected from Yahoo data or symbol patterns
+    """
+    quote_type = yahoo_info.get('quoteType', '').upper()
+    
+    # Primary mapping from Yahoo Finance quoteType
+    QUOTE_TYPE_MAPPING = {
+        'EQUITY': InstrumentType.STOCK,
+        'INDEX': InstrumentType.INDEX, 
+        'ETF': InstrumentType.ETF,
+        'MUTUALFUND': InstrumentType.FUND,
+        'FUTURE': InstrumentType.COMMODITY,
+        'CURRENCY': InstrumentType.CURRENCY,
+        'CRYPTOCURRENCY': InstrumentType.CRYPTOCURRENCY
+    }
+    
+    if quote_type in QUOTE_TYPE_MAPPING:
+        return QUOTE_TYPE_MAPPING[quote_type]
+    
+    # Fallback to symbol pattern analysis
+    return detect_from_symbol_pattern(ticker_symbol)
 
 
 class PriceFetcher(DataFetcher):
@@ -186,6 +254,56 @@ class PriceFetcher(DataFetcher):
                     data = data[(data['date'] >= start_date) & (data['date'] <= end_date)]
                 
                 return data
+                
+            except Exception as e:
+                if "No data found" in str(e) or "delisted" in str(e):
+                    raise YahooFinanceError(f"Ticker {ticker} not found or has no data")
+                raise e
+        
+        return self._retry_with_backoff(_fetch)
+    
+    def fetch_price_data_with_instrument_info(
+        self, 
+        ticker: str, 
+        start_date: date, 
+        end_date: Optional[date] = None
+    ) -> tuple[pd.DataFrame, InstrumentType, Dict[str, Any]]:
+        """
+        Fetch price data AND detect instrument type in one call.
+        
+        Args:
+            ticker: Ticker symbol
+            start_date: Start date for data fetch
+            end_date: End date for data fetch (defaults to today)
+            
+        Returns:
+            Tuple of (price_df, instrument_type, instrument_info)
+            
+        Raises:
+            YahooFinanceError: If data fetch fails after retries
+        """
+        if end_date is None:
+            end_date = date.today()
+
+        def _fetch():
+            self.logger.info(f"Fetching price data and instrument info for {ticker} from {start_date} to {end_date}")
+            
+            try:
+                yf_ticker = yf.Ticker(ticker)
+                
+                # Get price data
+                price_data = yf_ticker.history(start=start_date, end=end_date)
+                
+                if price_data.empty:
+                    raise YahooFinanceError(f"No price data found for {ticker}")
+                
+                # Get instrument info for type detection
+                info = yf_ticker.info
+                instrument_type = detect_instrument_type(ticker, info)
+                
+                self.logger.info(f"Detected instrument type for {ticker}: {instrument_type.value}")
+                
+                return price_data, instrument_type, info
                 
             except Exception as e:
                 if "No data found" in str(e) or "delisted" in str(e):

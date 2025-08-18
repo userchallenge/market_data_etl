@@ -28,6 +28,7 @@ pip install -e .
 - **Fundamental Data**: Financial statements, company info, analyst data
 - **Economic Data**: Indicators from Eurostat, ECB, FRED
 - **Portfolio Data**: Holdings and transactions
+- **Data Alignment**: Combine price and economic data for analysis
 
 ## CLI Commands
 
@@ -35,7 +36,8 @@ pip install -e .
 **Financial Data**: `fetch-financial-statements`, `financial-summary`, `fetch-fundamentals`
 **Economic Data**: `fetch-economic`, `economic-info`
 **Portfolio Management**: `load-portfolio`, `load-transactions`, `fetch-portfolio-prices`, `fetch-portfolio-fundamentals`, `portfolio-info`
-**Database & Utility**: `db-info`, `clear-database`
+**Data Alignment**: `align-data`, `alignment-info`, `alignment-pairs`
+**Database & Utility**: `db-info`, `clear-database`, `update-instrument-types`
 
 ```bash
 # Examples
@@ -43,6 +45,13 @@ market-data-etl fetch-prices --ticker AAPL --from 2024-01-01
 market-data-etl fetch-economic --source fred --indicator UNRATE --from 2024-01-01 --to 2024-12-31  # Uses FRED_API_KEY env var
 market-data-etl fetch-economic --source eurostat --indicator prc_hicp_mmor --from 2024-01-01
 market-data-etl economic-info --indicator unemployment_monthly_rate_us
+
+# Data Alignment Examples
+market-data-etl align-data --ticker AAPL --economic-indicator inflation_monthly_us
+market-data-etl align-data --ticker MSFT --economic-indicator unemployment_monthly_rate_us --from 2024-01-01 --method forward_fill
+market-data-etl alignment-info  # Show system information
+market-data-etl alignment-pairs --limit 10  # Show available data combinations
+
 market-data-etl --help  # Show all commands
 ```
 
@@ -51,6 +60,7 @@ market-data-etl --help  # Show all commands
 ```python
 from market_data_etl import PriceFetcher, DatabaseManager
 from market_data_etl.etl.load import EconomicETLOrchestrator
+from market_data_etl.data.data_alignment import DataAlignment
 from datetime import date
 
 # Market data
@@ -63,6 +73,14 @@ db.store_price_data("AAPL", price_data)
 economic_etl = EconomicETLOrchestrator(db)
 results = economic_etl.run_eurostat_etl("prc_hicp_mmor", "2020-01-01")
 df = db.get_economic_data("inflation_monthly_euro")
+
+# Data alignment
+alignment = DataAlignment(db)
+aligned_data = alignment.align_price_economic_data(
+    ticker="AAPL",
+    economic_indicator="inflation_monthly_us",
+    method="last_of_period"
+)
 ```
 
 ## Common Economic Indicators

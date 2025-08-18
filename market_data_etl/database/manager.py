@@ -2,7 +2,7 @@
 Unified database manager for market data and financial analysis.
 
 This module provides database operations for storing and retrieving:
-- Company information with currency support
+- Instrument information with currency support
 - Historical price data (OHLC + Volume)  
 - Structured financial statements (Income, Balance Sheet, Cash Flow)
 - Calculated financial ratios and metrics
@@ -21,9 +21,10 @@ from ..utils.logging import get_logger
 from ..utils.exceptions import DatabaseError
 from ..utils.validation import validate_ticker, sanitize_sql_input, validate_currency_code
 from ..data.models import (
-    Base, Company, Price, IncomeStatement, BalanceSheet, CashFlow, FinancialRatio,
+    Base, Instrument, Price, IncomeStatement, BalanceSheet, CashFlow, FinancialRatio,
     Portfolio, PortfolioHolding, Transaction, InstrumentType, TransactionType,
-    EconomicIndicator, EconomicIndicatorData, Threshold, Frequency, ThresholdCategory
+    EconomicIndicator, EconomicIndicatorData, Threshold, Frequency, ThresholdCategory,
+    AlignedDailyData
 )
 
 
@@ -36,7 +37,7 @@ class DatabaseManager:
     """
     Unified database manager for market data and financial analysis.
     
-    Handles storage and retrieval of company information, price data,
+    Handles storage and retrieval of instrument information, price data,
     and structured financial statements with proper relationships and currency handling.
     """
     
@@ -68,65 +69,65 @@ class DatabaseManager:
         return self.Session()
     
     # =============================================================================
-    # COMPANY MANAGEMENT
+    # INSTRUMENT MANAGEMENT
     # =============================================================================
     
-    def get_or_create_company(
+    def get_or_create_instrument(
         self,
         ticker: str,
         currency: str = 'USD',
-        company_info: Optional[Dict[str, Any]] = None,
+        instrument_info: Optional[Dict[str, Any]] = None,
         isin: Optional[str] = None,
         instrument_type: InstrumentType = InstrumentType.STOCK
-    ) -> Company:
+    ) -> Instrument:
         """
-        Get existing company record or create new one.
+        Get existing instrument record or create new one.
         
         Args:
-            ticker: Stock ticker symbol
+            ticker: Instrument ticker symbol
             currency: Currency code
-            company_info: Optional company information dictionary
+            instrument_info: Optional instrument information dictionary
             isin: Optional ISIN code
-            instrument_type: Type of instrument (stock, fund, etf)
+            instrument_type: Type of instrument (stock, fund, etf, index, etc.)
             
         Returns:
-            Company database record
+            Instrument database record
         """
         # Validate and sanitize inputs
         ticker = validate_ticker(ticker)
         currency = validate_currency_code(currency)
         
         with self.get_session() as session:
-            # Try to find existing company by ticker or ISIN
-            company = session.query(Company).filter(
-                (Company.ticker_symbol == ticker) | 
-                (Company.isin == isin) if isin else (Company.ticker_symbol == ticker)
+            # Try to find existing instrument by ticker or ISIN
+            instrument = session.query(Instrument).filter(
+                (Instrument.ticker_symbol == ticker) | 
+                (Instrument.isin == isin) if isin else (Instrument.ticker_symbol == ticker)
             ).first()
             
-            if company:
-                # Update company information if provided
-                if company_info:
-                    company.company_name = company_info.get('company_name') or company.company_name
-                    company.isin = isin or company.isin
-                    company.instrument_type = instrument_type
-                    company.sector = company_info.get('sector') or company.sector
-                    company.industry = company_info.get('industry') or company.industry
-                    company.country = company_info.get('country') or company.country
-                    company.currency = currency
-                    company.market_cap = company_info.get('market_cap') or company.market_cap
-                    company.employees = company_info.get('employees') or company.employees
-                    company.updated_at = datetime.utcnow()
+            if instrument:
+                # Update instrument information if provided
+                if instrument_info:
+                    instrument.instrument_name = instrument_info.get('instrument_name') or instrument.instrument_name
+                    instrument.isin = isin or instrument.isin
+                    instrument.instrument_type = instrument_type
+                    instrument.sector = instrument_info.get('sector') or instrument.sector
+                    instrument.industry = instrument_info.get('industry') or instrument.industry
+                    instrument.country = instrument_info.get('country') or instrument.country
+                    instrument.currency = currency
+                    instrument.market_cap = instrument_info.get('market_cap') or instrument.market_cap
+                    instrument.employees = instrument_info.get('employees') or instrument.employees
+                    instrument.updated_at = datetime.utcnow()
                     session.commit()
                 
-                self.logger.debug(f"Updated existing company record for {ticker}")
+                self.logger.debug(f"Updated existing instrument record for {ticker}")
             else:
-                # Create new company record
-                info = company_info or {}
-                company = Company(
+                # Create new instrument record
+                info = instrument_info or {}
+                instrument = Instrument(
                     ticker_symbol=ticker,
                     isin=isin,
                     instrument_type=instrument_type,
-                    company_name=info.get('company_name', ''),
+                    instrument_name=info.get('instrument_name', ''),
                     sector=info.get('sector', ''),
                     industry=info.get('industry', ''),
                     country=info.get('country', ''),
@@ -136,13 +137,18 @@ class DatabaseManager:
                     founded_year=info.get('founded_year'),
                     fund_type=info.get('fund_type')
                 )
-                session.add(company)
+                session.add(instrument)
                 session.commit()
-                session.refresh(company)
+                session.refresh(instrument)
                 
-                self.logger.debug(f"Created new company record for {ticker}")
+                self.logger.debug(f"Created new instrument record for {ticker}")
             
-            return company
+            return instrument
+    
+    # Backward compatibility alias
+    def get_or_create_company(self, *args, **kwargs):
+        """Deprecated: Use get_or_create_instrument instead."""
+        return self.get_or_create_instrument(*args, **kwargs)
     
     # =============================================================================
     # PRICE DATA OPERATIONS
@@ -159,15 +165,15 @@ class DatabaseManager:
             List of dates with existing price data
         """
         with self.get_session() as session:
-            company = session.query(Company).filter(
-                Company.ticker_symbol == ticker
+            instrument = session.query(Instrument).filter(
+                Instrument.ticker_symbol == ticker
             ).first()
             
-            if not company:
+            if not instrument:
                 return []
             
             dates = session.query(Price.date).filter(
-                Price.company_id == company.id
+                Price.instrument_id == instrument.id
             ).all()
             return [d[0] for d in dates]
     
@@ -182,31 +188,37 @@ class DatabaseManager:
             Tuple of (min_date, max_date) or None if no data exists
         """
         with self.get_session() as session:
-            company = session.query(Company).filter(
-                Company.ticker_symbol == ticker
+            instrument = session.query(Instrument).filter(
+                Instrument.ticker_symbol == ticker
             ).first()
             
-            if not company:
+            if not instrument:
                 return None
             
             from sqlalchemy import func
             result = session.query(
                 func.min(Price.date), 
                 func.max(Price.date)
-            ).filter(Price.company_id == company.id).first()
+            ).filter(Price.instrument_id == instrument.id).first()
             
             if result[0] is None:
                 return None
             
             return result
     
-    def store_price_data(self, ticker: str, price_data: pd.DataFrame) -> int:
+    def store_price_data(
+        self, 
+        ticker: str, 
+        price_data: pd.DataFrame, 
+        instrument_type: Optional[InstrumentType] = None
+    ) -> int:
         """
         Store price data in the database.
         
         Args:
-            ticker: Stock ticker symbol
+            ticker: Ticker symbol
             price_data: DataFrame with price data
+            instrument_type: Optional instrument type (auto-detected)
             
         Returns:
             Number of records inserted
@@ -215,11 +227,13 @@ class DatabaseManager:
             return 0
         
         try:
-            company = self.get_or_create_company(ticker)
+            # Use detected instrument type if provided, otherwise default to STOCK
+            final_instrument_type = instrument_type or InstrumentType.STOCK
+            instrument = self.get_or_create_instrument(ticker, instrument_type=final_instrument_type)
             
             with self.get_session() as session:
-                # Refresh company in this session
-                company = session.merge(company)
+                # Refresh instrument in this session
+                instrument = session.merge(instrument)
                 
                 inserted_count = 0
                 
@@ -228,7 +242,7 @@ class DatabaseManager:
                         # Check if record already exists
                         existing = session.query(Price).filter(
                             and_(
-                                Price.company_id == company.id,
+                                Price.instrument_id == instrument.id,
                                 Price.date == row['date']
                             )
                         ).first()
@@ -237,7 +251,7 @@ class DatabaseManager:
                             continue
                         
                         price_record = Price(
-                            company_id=company.id,
+                            instrument_id=instrument.id,
                             date=row['date'],
                             open=row.get('open'),
                             high=row.get('high'),
@@ -286,12 +300,12 @@ class DatabaseManager:
         """
         try:
             with self.get_session() as session:
-                # Get or create company record
-                company = self._get_or_create_company_in_session(
+                # Get or create instrument record
+                instrument = self._get_or_create_instrument_in_session(
                     session, 
                     ticker, 
                     financial_data.get('currency', 'USD'),
-                    financial_data.get('company_info', {})
+                    financial_data.get('instrument_info', {})
                 )
                 
                 storage_counts = {
@@ -307,7 +321,7 @@ class DatabaseManager:
                 if 'income_stmt' in statements:
                     count = self._store_income_statements(
                         session, 
-                        company.id, 
+                        instrument.id, 
                         statements['income_stmt']
                     )
                     storage_counts['income_statements'] = count
@@ -316,7 +330,7 @@ class DatabaseManager:
                 if 'balance_sheet' in statements:
                     count = self._store_balance_sheets(
                         session,
-                        company.id,
+                        instrument.id,
                         statements['balance_sheet']
                     )
                     storage_counts['balance_sheets'] = count
@@ -325,7 +339,7 @@ class DatabaseManager:
                 if 'cash_flow' in statements:
                     count = self._store_cash_flows(
                         session,
-                        company.id,
+                        instrument.id,
                         statements['cash_flow']
                     )
                     storage_counts['cash_flows'] = count
@@ -335,7 +349,7 @@ class DatabaseManager:
                 if derived_metrics:
                     count = self._store_financial_ratios(
                         session,
-                        company.id,
+                        instrument.id,
                         derived_metrics
                     )
                     storage_counts['financial_ratios'] = count
@@ -354,55 +368,55 @@ class DatabaseManager:
             self.logger.error(f"Failed to store financial data for {ticker}: {e}", exc_info=True)
             raise DatabaseError(f"Database storage failed: {e}") from e
     
-    def _get_or_create_company_in_session(
+    def _get_or_create_instrument_in_session(
         self,
         session: Session,
         ticker: str,
         currency: str,
-        company_info: Dict[str, Any]
-    ) -> Company:
-        """Get existing company record or create new one within a session."""
-        # Try to find existing company
-        company = session.query(Company).filter(
-            Company.ticker_symbol == ticker
+        instrument_info: Dict[str, Any]
+    ) -> Instrument:
+        """Get existing instrument record or create new one within a session."""
+        # Try to find existing instrument
+        instrument = session.query(Instrument).filter(
+            Instrument.ticker_symbol == ticker
         ).first()
         
-        if company:
-            # Update company information
-            company.company_name = company_info.get('company_name') or company.company_name
-            company.sector = company_info.get('sector') or company.sector
-            company.industry = company_info.get('industry') or company.industry
-            company.country = company_info.get('country') or company.country
-            company.currency = currency
-            company.market_cap = company_info.get('market_cap') or company.market_cap
-            company.employees = company_info.get('employees') or company.employees
-            company.updated_at = datetime.utcnow()
+        if instrument:
+            # Update instrument information
+            instrument.instrument_name = instrument_info.get('instrument_name') or instrument.instrument_name
+            instrument.sector = instrument_info.get('sector') or instrument.sector
+            instrument.industry = instrument_info.get('industry') or instrument.industry
+            instrument.country = instrument_info.get('country') or instrument.country
+            instrument.currency = currency
+            instrument.market_cap = instrument_info.get('market_cap') or instrument.market_cap
+            instrument.employees = instrument_info.get('employees') or instrument.employees
+            instrument.updated_at = datetime.utcnow()
             
-            self.logger.debug(f"Updated existing company record for {ticker}")
+            self.logger.debug(f"Updated existing instrument record for {ticker}")
         else:
-            # Create new company record
-            company = Company(
+            # Create new instrument record
+            instrument = Instrument(
                 ticker_symbol=ticker,
-                company_name=company_info.get('company_name', ''),
-                sector=company_info.get('sector', ''),
-                industry=company_info.get('industry', ''),
-                country=company_info.get('country', ''),
+                instrument_name=instrument_info.get('instrument_name', ''),
+                sector=instrument_info.get('sector', ''),
+                industry=instrument_info.get('industry', ''),
+                country=instrument_info.get('country', ''),
                 currency=currency,
-                market_cap=company_info.get('market_cap'),
-                employees=company_info.get('employees'),
-                founded_year=company_info.get('founded_year')
+                market_cap=instrument_info.get('market_cap'),
+                employees=instrument_info.get('employees'),
+                founded_year=instrument_info.get('founded_year')
             )
-            session.add(company)
+            session.add(instrument)
             session.flush()  # Get the ID
             
-            self.logger.debug(f"Created new company record for {ticker}")
+            self.logger.debug(f"Created new instrument record for {ticker}")
         
-        return company
+        return instrument
     
     def _store_income_statements(
         self,
         session: Session,
-        company_id: int,
+        instrument_id: int,
         income_data: Dict[str, Any]
     ) -> int:
         """Store income statement records."""
@@ -412,14 +426,14 @@ class DatabaseManager:
         annual_data = income_data.get('annual', {})
         for period_date, period_info in annual_data.items():
             count += self._store_single_income_statement(
-                session, company_id, period_date, period_info, 'annual'
+                session, instrument_id, period_date, period_info, 'annual'
             )
         
         # Store quarterly data
         quarterly_data = income_data.get('quarterly', {})
         for period_date, period_info in quarterly_data.items():
             count += self._store_single_income_statement(
-                session, company_id, period_date, period_info, 'quarterly'
+                session, instrument_id, period_date, period_info, 'quarterly'
             )
         
         return count
@@ -427,7 +441,7 @@ class DatabaseManager:
     def _store_single_income_statement(
         self,
         session: Session,
-        company_id: int,
+        instrument_id: int,
         period_date: str,
         period_info: Dict[str, Any],
         period_type: str
@@ -440,7 +454,7 @@ class DatabaseManager:
             # Check if record already exists
             existing = session.query(IncomeStatement).filter(
                 and_(
-                    IncomeStatement.company_id == company_id,
+                    IncomeStatement.instrument_id == instrument_id,
                     IncomeStatement.period_end_date == period_end_date,
                     IncomeStatement.period_type == period_type
                 )
@@ -450,7 +464,7 @@ class DatabaseManager:
                 income_stmt = existing
             else:
                 income_stmt = IncomeStatement(
-                    company_id=company_id,
+                    instrument_id=instrument_id,
                     period_end_date=period_end_date,
                     period_type=period_type
                 )
@@ -493,7 +507,7 @@ class DatabaseManager:
     def _store_balance_sheets(
         self,
         session: Session,
-        company_id: int,
+        instrument_id: int,
         balance_data: Dict[str, Any]
     ) -> int:
         """Store balance sheet records."""
@@ -503,14 +517,14 @@ class DatabaseManager:
         annual_data = balance_data.get('annual', {})
         for period_date, period_info in annual_data.items():
             count += self._store_single_balance_sheet(
-                session, company_id, period_date, period_info, 'annual'
+                session, instrument_id, period_date, period_info, 'annual'
             )
         
         # Store quarterly data
         quarterly_data = balance_data.get('quarterly', {})
         for period_date, period_info in quarterly_data.items():
             count += self._store_single_balance_sheet(
-                session, company_id, period_date, period_info, 'quarterly'
+                session, instrument_id, period_date, period_info, 'quarterly'
             )
         
         return count
@@ -518,7 +532,7 @@ class DatabaseManager:
     def _store_single_balance_sheet(
         self,
         session: Session,
-        company_id: int,
+        instrument_id: int,
         period_date: str,
         period_info: Dict[str, Any],
         period_type: str
@@ -531,7 +545,7 @@ class DatabaseManager:
             # Check if record already exists
             existing = session.query(BalanceSheet).filter(
                 and_(
-                    BalanceSheet.company_id == company_id,
+                    BalanceSheet.instrument_id == instrument_id,
                     BalanceSheet.period_end_date == period_end_date,
                     BalanceSheet.period_type == period_type
                 )
@@ -541,7 +555,7 @@ class DatabaseManager:
                 balance_sheet = existing
             else:
                 balance_sheet = BalanceSheet(
-                    company_id=company_id,
+                    instrument_id=instrument_id,
                     period_end_date=period_end_date,
                     period_type=period_type
                 )
@@ -626,7 +640,7 @@ class DatabaseManager:
     def _store_cash_flows(
         self,
         session: Session,
-        company_id: int,
+        instrument_id: int,
         cashflow_data: Dict[str, Any]
     ) -> int:
         """Store cash flow statement records."""
@@ -636,14 +650,14 @@ class DatabaseManager:
         annual_data = cashflow_data.get('annual', {})
         for period_date, period_info in annual_data.items():
             count += self._store_single_cash_flow(
-                session, company_id, period_date, period_info, 'annual'
+                session, instrument_id, period_date, period_info, 'annual'
             )
         
         # Store quarterly data
         quarterly_data = cashflow_data.get('quarterly', {})
         for period_date, period_info in quarterly_data.items():
             count += self._store_single_cash_flow(
-                session, company_id, period_date, period_info, 'quarterly'
+                session, instrument_id, period_date, period_info, 'quarterly'
             )
         
         return count
@@ -651,7 +665,7 @@ class DatabaseManager:
     def _store_single_cash_flow(
         self,
         session: Session,
-        company_id: int,
+        instrument_id: int,
         period_date: str,
         period_info: Dict[str, Any],
         period_type: str
@@ -664,7 +678,7 @@ class DatabaseManager:
             # Check if record already exists
             existing = session.query(CashFlow).filter(
                 and_(
-                    CashFlow.company_id == company_id,
+                    CashFlow.instrument_id == instrument_id,
                     CashFlow.period_end_date == period_end_date,
                     CashFlow.period_type == period_type
                 )
@@ -674,7 +688,7 @@ class DatabaseManager:
                 cash_flow = existing
             else:
                 cash_flow = CashFlow(
-                    company_id=company_id,
+                    instrument_id=instrument_id,
                     period_end_date=period_end_date,
                     period_type=period_type
                 )
@@ -723,7 +737,7 @@ class DatabaseManager:
     def _store_financial_ratios(
         self,
         session: Session,
-        company_id: int,
+        instrument_id: int,
         derived_metrics: Dict[str, Any]
     ) -> int:
         """Store calculated financial ratios."""
@@ -733,14 +747,14 @@ class DatabaseManager:
         annual_data = derived_metrics.get('annual', {})
         for period_date, metrics in annual_data.items():
             count += self._store_single_financial_ratio(
-                session, company_id, period_date, metrics, 'annual'
+                session, instrument_id, period_date, metrics, 'annual'
             )
         
         # Store quarterly ratios
         quarterly_data = derived_metrics.get('quarterly', {})
         for period_date, metrics in quarterly_data.items():
             count += self._store_single_financial_ratio(
-                session, company_id, period_date, metrics, 'quarterly'
+                session, instrument_id, period_date, metrics, 'quarterly'
             )
         
         return count
@@ -748,7 +762,7 @@ class DatabaseManager:
     def _store_single_financial_ratio(
         self,
         session: Session,
-        company_id: int,
+        instrument_id: int,
         period_date: str,
         metrics: Dict[str, float],
         period_type: str
@@ -760,7 +774,7 @@ class DatabaseManager:
             # Check if record already exists
             existing = session.query(FinancialRatio).filter(
                 and_(
-                    FinancialRatio.company_id == company_id,
+                    FinancialRatio.instrument_id == instrument_id,
                     FinancialRatio.period_end_date == period_end_date,
                     FinancialRatio.period_type == period_type
                 )
@@ -770,7 +784,7 @@ class DatabaseManager:
                 ratio = existing
             else:
                 ratio = FinancialRatio(
-                    company_id=company_id,
+                    instrument_id=instrument_id,
                     period_end_date=period_end_date,
                     period_type=period_type
                 )
@@ -807,13 +821,13 @@ class DatabaseManager:
     # INFORMATION AND REPORTING
     # =============================================================================
     
-    def get_company_financial_summary(
+    def get_instrument_financial_summary(
         self, 
         ticker: str,
         years: int = DEFAULT_SUMMARY_YEARS
     ) -> Dict[str, Any]:
         """
-        Get comprehensive financial summary for a company.
+        Get comprehensive financial summary for a instrument.
         
         Args:
             ticker: Stock ticker symbol
@@ -824,11 +838,11 @@ class DatabaseManager:
         """
         try:
             with self.get_session() as session:
-                company = session.query(Company).filter(
-                    Company.ticker_symbol == ticker
+                instrument = session.query(Instrument).filter(
+                    Instrument.ticker_symbol == ticker
                 ).first()
                 
-                if not company:
+                if not instrument:
                     return {}
                 
                 cutoff_date = date(date.today().year - years + 1, 1, 1)
@@ -836,59 +850,59 @@ class DatabaseManager:
                 # Get recent data counts
                 income_count = session.query(IncomeStatement).filter(
                     and_(
-                        IncomeStatement.company_id == company.id,
+                        IncomeStatement.instrument_id == instrument.id,
                         IncomeStatement.period_end_date >= cutoff_date
                     )
                 ).count()
                 
                 balance_count = session.query(BalanceSheet).filter(
                     and_(
-                        BalanceSheet.company_id == company.id,
+                        BalanceSheet.instrument_id == instrument.id,
                         BalanceSheet.period_end_date >= cutoff_date
                     )
                 ).count()
                 
                 cashflow_count = session.query(CashFlow).filter(
                     and_(
-                        CashFlow.company_id == company.id,
+                        CashFlow.instrument_id == instrument.id,
                         CashFlow.period_end_date >= cutoff_date
                     )
                 ).count()
                 
                 ratios_count = session.query(FinancialRatio).filter(
                     and_(
-                        FinancialRatio.company_id == company.id,
+                        FinancialRatio.instrument_id == instrument.id,
                         FinancialRatio.period_end_date >= cutoff_date
                     )
                 ).count()
                 
                 # Get latest data
                 latest_income = session.query(IncomeStatement).filter(
-                    IncomeStatement.company_id == company.id
+                    IncomeStatement.instrument_id == instrument.id
                 ).order_by(desc(IncomeStatement.period_end_date)).first()
                 
                 latest_balance = session.query(BalanceSheet).filter(
-                    BalanceSheet.company_id == company.id
+                    BalanceSheet.instrument_id == instrument.id
                 ).order_by(desc(BalanceSheet.period_end_date)).first()
                 
                 latest_cashflow = session.query(CashFlow).filter(
-                    CashFlow.company_id == company.id
+                    CashFlow.instrument_id == instrument.id
                 ).order_by(desc(CashFlow.period_end_date)).first()
                 
                 latest_ratios = session.query(FinancialRatio).filter(
-                    FinancialRatio.company_id == company.id
+                    FinancialRatio.instrument_id == instrument.id
                 ).order_by(desc(FinancialRatio.period_end_date)).first()
                 
                 return {
-                    'company': {
-                        'ticker': company.ticker_symbol,
-                        'name': company.company_name,
-                        'sector': company.sector,
-                        'industry': company.industry,
-                        'country': company.country,
-                        'currency': company.currency,
-                        'market_cap': company.market_cap,
-                        'employees': company.employees
+                    'instrument': {
+                        'ticker': instrument.ticker_symbol,
+                        'name': instrument.instrument_name,
+                        'sector': instrument.sector,
+                        'industry': instrument.industry,
+                        'country': instrument.country,
+                        'currency': instrument.currency,
+                        'market_cap': instrument.market_cap,
+                        'employees': instrument.employees
                     },
                     'data_summary': {
                         'income_statements': income_count,
@@ -912,22 +926,22 @@ class DatabaseManager:
             self.logger.error(f"Failed to get financial summary for {ticker}: {e}")
             raise DatabaseError(f"Failed to retrieve financial summary: {e}")
     
-    def get_ticker_info(self, ticker: str) -> Dict[str, Any]:
+    def get_instrument_info(self, ticker: str) -> Dict[str, Any]:
         """
-        Get information about stored data for a company.
+        Get information about stored data for an instrument.
         
         Args:
-            ticker: Stock ticker symbol
+            ticker: Instrument ticker symbol
             
         Returns:
-            Dictionary with company information
+            Dictionary with instrument information and stored data summary
         """
         with self.get_session() as session:
-            company = session.query(Company).filter(
-                Company.ticker_symbol == ticker
+            instrument = session.query(Instrument).filter(
+                Instrument.ticker_symbol == ticker
             ).first()
             
-            if not company:
+            if not instrument:
                 return {
                     'ticker': ticker,
                     'exists': False,
@@ -937,26 +951,27 @@ class DatabaseManager:
             
             # Get price data info
             price_range = self.get_price_date_range(ticker)
-            price_count = session.query(Price).filter(Price.company_id == company.id).count()
+            price_count = session.query(Price).filter(Price.instrument_id == instrument.id).count()
             
             # Get financial statement counts
-            income_count = session.query(IncomeStatement).filter(IncomeStatement.company_id == company.id).count()
-            balance_count = session.query(BalanceSheet).filter(BalanceSheet.company_id == company.id).count()
-            cashflow_count = session.query(CashFlow).filter(CashFlow.company_id == company.id).count()
-            ratios_count = session.query(FinancialRatio).filter(FinancialRatio.company_id == company.id).count()
+            income_count = session.query(IncomeStatement).filter(IncomeStatement.instrument_id == instrument.id).count()
+            balance_count = session.query(BalanceSheet).filter(BalanceSheet.instrument_id == instrument.id).count()
+            cashflow_count = session.query(CashFlow).filter(CashFlow.instrument_id == instrument.id).count()
+            ratios_count = session.query(FinancialRatio).filter(FinancialRatio.instrument_id == instrument.id).count()
             
             return {
                 'ticker': ticker,
                 'exists': True,
-                'company': {
-                    'name': company.company_name,
-                    'sector': company.sector,
-                    'industry': company.industry,
-                    'country': company.country,
-                    'currency': company.currency,
-                    'market_cap': company.market_cap,
-                    'employees': company.employees,
-                    'created_at': company.created_at
+                'instrument_id': instrument.id,
+                'instrument': {
+                    'name': instrument.instrument_name,
+                    'sector': instrument.sector,
+                    'industry': instrument.industry,
+                    'country': instrument.country,
+                    'currency': instrument.currency,
+                    'market_cap': instrument.market_cap,
+                    'employees': instrument.employees,
+                    'created_at': instrument.created_at
                 },
                 'price_data': {
                     'count': price_count,
@@ -969,6 +984,11 @@ class DatabaseManager:
                     'financial_ratios': ratios_count
                 }
             }
+    
+    # Backward compatibility alias
+    def get_ticker_info(self, ticker: str) -> Dict[str, Any]:
+        """Deprecated: Use get_instrument_info instead."""
+        return self.get_instrument_info(ticker)
     
     # =============================================================================
     # DATABASE CLEARING METHODS (for development/testing)
@@ -988,34 +1008,34 @@ class DatabaseManager:
             ticker = validate_ticker(ticker)
             
             with self.get_session() as session:
-                # Find the company
-                company = session.query(Company).filter(
-                    Company.ticker_symbol == ticker
+                # Find the instrument
+                instrument = session.query(Instrument).filter(
+                    Instrument.ticker_symbol == ticker
                 ).first()
                 
-                if not company:
+                if not instrument:
                     return False
                 
                 # Delete portfolio-related data first (due to foreign key constraints)
                 session.query(Transaction).filter(
                     Transaction.portfolio_id.in_(
                         session.query(Portfolio.id).join(PortfolioHolding).filter(
-                            PortfolioHolding.company_id == company.id
+                            PortfolioHolding.instrument_id == instrument.id
                         )
                     )
                 ).delete(synchronize_session=False)
                 
-                session.query(PortfolioHolding).filter(PortfolioHolding.company_id == company.id).delete()
+                session.query(PortfolioHolding).filter(PortfolioHolding.instrument_id == instrument.id).delete()
                 
                 # Delete all other related data
-                session.query(Price).filter(Price.company_id == company.id).delete()
-                session.query(IncomeStatement).filter(IncomeStatement.company_id == company.id).delete()
-                session.query(BalanceSheet).filter(BalanceSheet.company_id == company.id).delete()
-                session.query(CashFlow).filter(CashFlow.company_id == company.id).delete()
-                session.query(FinancialRatio).filter(FinancialRatio.company_id == company.id).delete()
+                session.query(Price).filter(Price.instrument_id == instrument.id).delete()
+                session.query(IncomeStatement).filter(IncomeStatement.instrument_id == instrument.id).delete()
+                session.query(BalanceSheet).filter(BalanceSheet.instrument_id == instrument.id).delete()
+                session.query(CashFlow).filter(CashFlow.instrument_id == instrument.id).delete()
+                session.query(FinancialRatio).filter(FinancialRatio.instrument_id == instrument.id).delete()
                 
-                # Delete the company record
-                session.delete(company)
+                # Delete the instrument record
+                session.delete(instrument)
                 
                 session.commit()
                 self.logger.info(f"Cleared all data for ticker {ticker}")
@@ -1046,7 +1066,7 @@ class DatabaseManager:
                 session.query(BalanceSheet).delete()
                 session.query(CashFlow).delete()
                 session.query(FinancialRatio).delete()
-                session.query(Company).delete()
+                session.query(Instrument).delete()
                 
                 session.commit()
                 self.logger.info("Cleared all data from database")
@@ -1121,7 +1141,7 @@ class DatabaseManager:
         
         # Add new holdings
         for ticker, holding_info in holdings_config.items():
-            # Create or get company
+            # Create or get instrument
             isin = holding_info.get('isin')
             yahoo_ticker = holding_info.get('yahoo_ticker')
             instrument_type_str = holding_info.get('type', 'stock')
@@ -1137,38 +1157,38 @@ class DatabaseManager:
             # Use yahoo_ticker if available, otherwise use the key (ticker)
             effective_ticker = yahoo_ticker if yahoo_ticker else ticker
             
-            company_info = {
-                'company_name': holding_info.get('name', ''),
+            instrument_info = {
+                'instrument_name': holding_info.get('name', ''),
                 'sector': holding_info.get('sector', ''),
                 'country': holding_info.get('country', ''),
                 'fund_type': holding_info.get('fund_type', '')
             }
             
-            # Find or create company within this session
-            company = session.query(Company).filter(
-                (Company.ticker_symbol == effective_ticker) | 
-                (Company.isin == isin) if isin else (Company.ticker_symbol == effective_ticker)
+            # Find or create instrument within this session
+            instrument = session.query(Instrument).filter(
+                (Instrument.ticker_symbol == effective_ticker) | 
+                (Instrument.isin == isin) if isin else (Instrument.ticker_symbol == effective_ticker)
             ).first()
             
-            if not company:
-                company = Company(
+            if not instrument:
+                instrument = Instrument(
                     ticker_symbol=effective_ticker,
                     isin=isin,
                     instrument_type=instrument_type,
-                    company_name=company_info.get('company_name', ''),
-                    sector=company_info.get('sector', ''),
-                    industry=company_info.get('industry', ''),
-                    country=company_info.get('country', ''),
+                    instrument_name=instrument_info.get('instrument_name', ''),
+                    sector=instrument_info.get('sector', ''),
+                    industry=instrument_info.get('industry', ''),
+                    country=instrument_info.get('country', ''),
                     currency='USD',  # Default
-                    fund_type=company_info.get('fund_type')
+                    fund_type=instrument_info.get('fund_type')
                 )
-                session.add(company)
+                session.add(instrument)
                 session.flush()  # Get the ID but don't commit yet
             
             # Create portfolio holding
             holding = PortfolioHolding(
                 portfolio_id=portfolio.id,
-                company_id=company.id,
+                instrument_id=instrument.id,
                 sector=holding_info.get('sector'),
                 fund_type=holding_info.get('fund_type'),
                 notes=f"Added from portfolio config: {holding_info.get('name', '')}"
@@ -1204,22 +1224,22 @@ class DatabaseManager:
                     isin = row.get('isin')
                     transaction_type = TransactionType(row['transaction_type'].lower())
                     
-                    # Find or create company
-                    company = session.query(Company).filter(
-                        (Company.ticker_symbol == ticker) | 
-                        (Company.isin == isin) if isin else (Company.ticker_symbol == ticker)
+                    # Find or create instrument
+                    instrument = session.query(Instrument).filter(
+                        (Instrument.ticker_symbol == ticker) | 
+                        (Instrument.isin == isin) if isin else (Instrument.ticker_symbol == ticker)
                     ).first()
                     
-                    if not company:
-                        # Create basic company record for transaction
-                        company = Company(
+                    if not instrument:
+                        # Create basic instrument record for transaction
+                        instrument = Instrument(
                             ticker_symbol=ticker,
                             isin=isin,
                             instrument_type=InstrumentType.STOCK,  # Default
-                            company_name=f"Company for {ticker}",
+                            instrument_name=f"Instrument for {ticker}",
                             currency=row['currency']
                         )
-                        session.add(company)
+                        session.add(instrument)
                         session.flush()  # Get the ID
                     
                     # Calculate total amount
@@ -1237,7 +1257,7 @@ class DatabaseManager:
                     # Create transaction
                     transaction = Transaction(
                         portfolio_id=portfolio.id if portfolio else None,
-                        company_id=company.id,
+                        instrument_id=instrument.id,
                         transaction_date=datetime.strptime(row['date'], '%Y-%m-%d').date(),
                         transaction_type=transaction_type,
                         quantity=quantity,
@@ -1291,11 +1311,11 @@ class DatabaseManager:
                 # Get holdings breakdown by instrument type
                 from sqlalchemy import func
                 holdings_breakdown = session.query(
-                    Company.instrument_type,
+                    Instrument.instrument_type,
                     func.count().label('count')
                 ).join(PortfolioHolding).filter(
                     PortfolioHolding.portfolio_id == portfolio.id
-                ).group_by(Company.instrument_type).all()
+                ).group_by(Instrument.instrument_type).all()
                 
                 return {
                     'exists': True,
@@ -1570,6 +1590,163 @@ class DatabaseManager:
             
             df = pd.DataFrame(results, columns=['date', 'value'])
             return df
+
+    def get_all_economic_indicators(self) -> List[Dict[str, Any]]:
+        """
+        Get all economic indicators in the database.
+        
+        Returns:
+            List of economic indicator dictionaries
+        """
+        try:
+            with self.get_session() as session:
+                indicators = session.query(EconomicIndicator).all()
+                
+                result = []
+                for indicator in indicators:
+                    result.append({
+                        'id': indicator.id,
+                        'name': indicator.name,
+                        'source': indicator.source,
+                        'source_identifier': indicator.source_identifier,
+                        'description': indicator.description,
+                        'unit': indicator.unit,
+                        'frequency': indicator.frequency.value,
+                        'created_at': indicator.created_at,
+                        'updated_at': indicator.updated_at
+                    })
+                
+                return result
+                
+        except Exception as e:
+            self.logger.error(f"Failed to get all economic indicators: {e}")
+            raise DatabaseError(f"Failed to get all economic indicators: {e}") from e
+
+    def get_all_instruments_info(self) -> List[Dict[str, Any]]:
+        """
+        Get all instruments in the database with basic info.
+        
+        Returns:
+            List of instrument info dictionaries
+        """
+        try:
+            with self.get_session() as session:
+                instruments = session.query(Instrument).all()
+                
+                result = []
+                for instrument in instruments:
+                    result.append({
+                        'instrument_id': instrument.id,
+                        'ticker_symbol': instrument.ticker_symbol,
+                        'instrument_name': instrument.instrument_name,
+                        'instrument_type': instrument.instrument_type.value,
+                        'sector': instrument.sector,
+                        'industry': instrument.industry,
+                        'country': instrument.country,
+                        'currency': instrument.currency
+                    })
+                
+                return result
+                
+        except Exception as e:
+            self.logger.error(f"Failed to get all instruments info: {e}")
+            raise DatabaseError(f"Failed to get all instruments info: {e}") from e
+
+    def get_price_data_count(self, ticker: str) -> int:
+        """
+        Get count of price data points for a ticker.
+        
+        Args:
+            ticker: Ticker symbol
+            
+        Returns:
+            Number of price data points
+        """
+        ticker = validate_ticker(ticker)
+        
+        try:
+            with self.get_session() as session:
+                instrument = session.query(Instrument).filter(
+                    Instrument.ticker_symbol == ticker
+                ).first()
+                
+                if not instrument:
+                    return 0
+                
+                count = session.query(Price).filter(
+                    Price.instrument_id == instrument.id
+                ).count()
+                
+                return count
+                
+        except Exception as e:
+            self.logger.error(f"Failed to get price data count for {ticker}: {e}")
+            return 0
+
+    def get_price_data(
+        self, 
+        ticker: str, 
+        start_date: Optional[date] = None, 
+        end_date: Optional[date] = None
+    ) -> pd.DataFrame:
+        """
+        Get price data for a ticker as DataFrame.
+        
+        Args:
+            ticker: Ticker symbol
+            start_date: Optional start date filter
+            end_date: Optional end date filter
+            
+        Returns:
+            DataFrame with price data (date index, OHLC columns)
+        """
+        ticker = validate_ticker(ticker)
+        
+        try:
+            with self.get_session() as session:
+                instrument = session.query(Instrument).filter(
+                    Instrument.ticker_symbol == ticker
+                ).first()
+                
+                if not instrument:
+                    return pd.DataFrame()
+                
+                query = session.query(Price).filter(
+                    Price.instrument_id == instrument.id
+                )
+                
+                if start_date:
+                    query = query.filter(Price.date >= start_date)
+                if end_date:
+                    query = query.filter(Price.date <= end_date)
+                
+                query = query.order_by(Price.date)
+                results = query.all()
+                
+                if not results:
+                    return pd.DataFrame()
+                
+                # Convert to DataFrame
+                data = []
+                for price in results:
+                    data.append({
+                        'date': price.date,
+                        'open': price.open,
+                        'high': price.high,
+                        'low': price.low,
+                        'close': price.close,
+                        'adjusted_close': price.adj_close,
+                        'volume': price.volume
+                    })
+                
+                df = pd.DataFrame(data)
+                df.set_index('date', inplace=True)
+                
+                return df
+                
+        except Exception as e:
+            self.logger.error(f"Failed to get price data for {ticker}: {e}")
+            return pd.DataFrame()
     
     def store_thresholds(
         self,
@@ -1626,3 +1803,537 @@ class DatabaseManager:
         except Exception as e:
             self.logger.error(f"Failed to store thresholds for {indicator_name}: {e}")
             raise DatabaseError(f"Threshold storage failed: {e}") from e
+
+    # =============================================================================
+    # DATA ALIGNMENT METHODS
+    # =============================================================================
+
+    def get_aligned_price_economic_data(
+        self, 
+        instrument_ticker: str, 
+        economic_indicator_name: str,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None,
+        alignment_method: str = "last_of_period"
+    ) -> List[Dict[str, Any]]:
+        """
+        Get aligned price and economic data for analysis.
+        
+        Args:
+            instrument_ticker: Ticker symbol for price data
+            economic_indicator_name: Name of economic indicator
+            start_date: Start date for data (optional)
+            end_date: End date for data (optional)
+            alignment_method: Method for alignment (last_of_period, first_of_period, etc.)
+            
+        Returns:
+            List of aligned data points
+        """
+        try:
+            with self.get_session() as session:
+                # Get instrument
+                instrument = session.query(Instrument).filter(
+                    Instrument.ticker_symbol == instrument_ticker
+                ).first()
+                
+                if not instrument:
+                    raise DatabaseError(f"Instrument {instrument_ticker} not found")
+                
+                # Get economic indicator
+                indicator = session.query(EconomicIndicator).filter(
+                    EconomicIndicator.name == economic_indicator_name
+                ).first()
+                
+                if not indicator:
+                    raise DatabaseError(f"Economic indicator {economic_indicator_name} not found")
+                
+                # Build date filters
+                price_filters = [Price.instrument_id == instrument.id]
+                economic_filters = [EconomicIndicatorData.indicator_id == indicator.id]
+                
+                if start_date:
+                    price_filters.append(Price.date >= start_date)
+                    economic_filters.append(EconomicIndicatorData.date >= start_date)
+                
+                if end_date:
+                    price_filters.append(Price.date <= end_date)
+                    economic_filters.append(EconomicIndicatorData.date <= end_date)
+                
+                # Get price data
+                price_data = session.query(Price).filter(and_(*price_filters)).order_by(Price.date).all()
+                
+                # Get economic data
+                economic_data = session.query(EconomicIndicatorData).filter(
+                    and_(*economic_filters)
+                ).order_by(EconomicIndicatorData.date).all()
+                
+                if not price_data:
+                    self.logger.warning(f"No price data found for {instrument_ticker}")
+                    return []
+                
+                if not economic_data:
+                    self.logger.warning(f"No economic data found for {economic_indicator_name}")
+                    return []
+                
+                # Convert to list format for alignment
+                price_list = [
+                    {
+                        'date': p.date.strftime('%Y-%m-%d'),
+                        'open': p.open,
+                        'high': p.high,
+                        'low': p.low,
+                        'close': p.close,
+                        'adj_close': p.adj_close,
+                        'volume': p.volume
+                    }
+                    for p in price_data
+                ]
+                
+                economic_list = [
+                    {
+                        'date': e.date.strftime('%Y-%m-%d'),
+                        'value': e.value,
+                        'indicator_name': economic_indicator_name,
+                        'source': indicator.source,
+                        'unit': indicator.unit
+                    }
+                    for e in economic_data
+                ]
+                
+                # Use data alignment module
+                from ..data.data_alignment import DataAligner, AlignmentMethod
+                aligner = DataAligner()
+                
+                # Map string method to enum
+                method_mapping = {
+                    'last_of_period': AlignmentMethod.LAST_OF_PERIOD,
+                    'first_of_period': AlignmentMethod.FIRST_OF_PERIOD,
+                    'forward_fill': AlignmentMethod.FORWARD_FILL,
+                    'nearest': AlignmentMethod.NEAREST
+                }
+                
+                alignment_enum = method_mapping.get(alignment_method, AlignmentMethod.LAST_OF_PERIOD)
+                
+                aligned_data = aligner.align_daily_to_monthly(
+                    daily_data=price_list,
+                    monthly_data=economic_list,
+                    alignment_method=alignment_enum
+                )
+                
+                # Add metadata
+                for point in aligned_data:
+                    point['instrument_ticker'] = instrument_ticker
+                    point['instrument_name'] = instrument.instrument_name
+                    point['economic_indicator'] = economic_indicator_name
+                    point['alignment_method'] = alignment_method
+                
+                self.logger.info(f"Retrieved {len(aligned_data)} aligned data points for {instrument_ticker} vs {economic_indicator_name}")
+                return aligned_data
+                
+        except Exception as e:
+            self.logger.error(f"Failed to get aligned data: {e}")
+            raise DatabaseError(f"Data alignment failed: {e}") from e
+
+    def get_multiple_aligned_data(
+        self,
+        instrument_tickers: List[str],
+        economic_indicator_names: List[str],
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None,
+        alignment_method: str = "last_of_period"
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """
+        Get aligned data for multiple instruments and economic indicators.
+        
+        Args:
+            instrument_tickers: List of ticker symbols
+            economic_indicator_names: List of economic indicator names
+            start_date: Start date for data (optional)
+            end_date: End date for data (optional)
+            alignment_method: Method for alignment
+            
+        Returns:
+            Dictionary with aligned data for each instrument-indicator combination
+        """
+        results = {}
+        
+        for ticker in instrument_tickers:
+            for indicator_name in economic_indicator_names:
+                key = f"{ticker}_{indicator_name}"
+                try:
+                    aligned_data = self.get_aligned_price_economic_data(
+                        instrument_ticker=ticker,
+                        economic_indicator_name=indicator_name,
+                        start_date=start_date,
+                        end_date=end_date,
+                        alignment_method=alignment_method
+                    )
+                    results[key] = aligned_data
+                    
+                except Exception as e:
+                    self.logger.warning(f"Failed to align {ticker} with {indicator_name}: {e}")
+                    results[key] = []
+        
+        return results
+
+    def get_available_alignment_pairs(self) -> List[Dict[str, Any]]:
+        """
+        Get available instrument-economic indicator pairs for alignment.
+        
+        Returns:
+            List of available combinations with metadata
+        """
+        try:
+            with self.get_session() as session:
+                # Get instruments with price data
+                instruments_with_prices = session.query(Instrument).join(Price).distinct().all()
+                
+                # Get economic indicators with data
+                indicators_with_data = session.query(EconomicIndicator).join(EconomicIndicatorData).distinct().all()
+                
+                pairs = []
+                for instrument in instruments_with_prices:
+                    for indicator in indicators_with_data:
+                        pairs.append({
+                            'instrument_ticker': instrument.ticker_symbol,
+                            'instrument_name': instrument.instrument_name,
+                            'instrument_type': instrument.instrument_type.value if instrument.instrument_type else 'unknown',
+                            'economic_indicator': indicator.name,
+                            'indicator_description': indicator.description,
+                            'indicator_source': indicator.source,
+                            'indicator_frequency': indicator.frequency.value if indicator.frequency else 'unknown',
+                            'indicator_unit': indicator.unit
+                        })
+                
+                self.logger.info(f"Found {len(pairs)} available alignment pairs")
+                return pairs
+                
+        except Exception as e:
+            self.logger.error(f"Failed to get alignment pairs: {e}")
+            raise DatabaseError(f"Failed to get alignment pairs: {e}") from e
+
+    def get_alignment_data_summary(self) -> Dict[str, Any]:
+        """
+        Get summary of data available for alignment.
+        
+        Returns:
+            Summary statistics for alignment capabilities
+        """
+        try:
+            with self.get_session() as session:
+                # Count instruments with price data
+                instruments_with_prices = session.query(Instrument.id).join(Price).distinct().count()
+                
+                # Count economic indicators with data
+                indicators_with_data = session.query(EconomicIndicator.id).join(EconomicIndicatorData).distinct().count()
+                
+                # Get date ranges
+                price_date_range = session.query(
+                    Price.date.label('min_date'),
+                    Price.date.label('max_date')
+                ).order_by(Price.date.asc()).first(), session.query(
+                    Price.date.label('min_date'),
+                    Price.date.label('max_date')
+                ).order_by(Price.date.desc()).first()
+                
+                economic_date_range = session.query(
+                    EconomicIndicatorData.date.label('min_date'),
+                    EconomicIndicatorData.date.label('max_date')
+                ).order_by(EconomicIndicatorData.date.asc()).first(), session.query(
+                    EconomicIndicatorData.date.label('min_date'),
+                    EconomicIndicatorData.date.label('max_date')
+                ).order_by(EconomicIndicatorData.date.desc()).first()
+                
+                # Calculate potential alignment pairs
+                total_pairs = instruments_with_prices * indicators_with_data
+                
+                summary = {
+                    'instruments_with_price_data': instruments_with_prices,
+                    'economic_indicators_with_data': indicators_with_data,
+                    'potential_alignment_pairs': total_pairs,
+                    'price_data_date_range': {
+                        'start': price_date_range[0].min_date.strftime('%Y-%m-%d') if price_date_range[0] else None,
+                        'end': price_date_range[1].max_date.strftime('%Y-%m-%d') if price_date_range[1] else None
+                    },
+                    'economic_data_date_range': {
+                        'start': economic_date_range[0].min_date.strftime('%Y-%m-%d') if economic_date_range[0] else None,
+                        'end': economic_date_range[1].max_date.strftime('%Y-%m-%d') if economic_date_range[1] else None
+                    }
+                }
+                
+                return summary
+                
+        except Exception as e:
+            self.logger.error(f"Failed to get alignment summary: {e}")
+            raise DatabaseError(f"Failed to get alignment summary: {e}") from e
+
+    # ============================================================================
+    # Aligned Daily Data Methods
+    # ============================================================================
+
+    def store_aligned_daily_data(
+        self, 
+        aligned_records: List[Dict[str, Any]], 
+        clear_existing: bool = False
+    ) -> int:
+        """
+        Store aligned daily data records in the database.
+        
+        Args:
+            aligned_records: List of aligned data records from ForwardFillTransformer
+            clear_existing: Whether to clear existing data before inserting
+            
+        Returns:
+            Number of records stored
+        """
+        if not aligned_records:
+            self.logger.warning("No aligned records to store")
+            return 0
+        
+        try:
+            with self.get_session() as session:
+                stored_count = 0
+                
+                # Clear existing data if requested
+                if clear_existing:
+                    # Get unique instrument IDs and date range from records
+                    instrument_ids = list(set(record['instrument_id'] for record in aligned_records))
+                    dates = [record['date'] for record in aligned_records]
+                    min_date, max_date = min(dates), max(dates)
+                    
+                    deleted_count = session.query(AlignedDailyData).filter(
+                        AlignedDailyData.instrument_id.in_(instrument_ids),
+                        AlignedDailyData.date.between(min_date, max_date)
+                    ).delete(synchronize_session=False)
+                    
+                    if deleted_count > 0:
+                        self.logger.info(f"Cleared {deleted_count} existing aligned records")
+                
+                # Insert new records in batches
+                batch_size = 1000
+                for i in range(0, len(aligned_records), batch_size):
+                    batch = aligned_records[i:i + batch_size]
+                    
+                    # Convert to AlignedDailyData objects
+                    aligned_objects = []
+                    for record in batch:
+                        aligned_obj = AlignedDailyData(**record)
+                        aligned_objects.append(aligned_obj)
+                    
+                    # Use bulk insert for performance
+                    session.bulk_save_objects(aligned_objects)
+                    stored_count += len(batch)
+                    
+                    if i % (batch_size * 5) == 0:  # Log every 5000 records
+                        self.logger.debug(f"Stored {stored_count}/{len(aligned_records)} aligned records")
+                
+                session.commit()
+                self.logger.info(f"Successfully stored {stored_count} aligned daily records")
+                return stored_count
+                
+        except Exception as e:
+            self.logger.error(f"Failed to store aligned daily data: {e}")
+            raise DatabaseError(f"Failed to store aligned daily data: {e}") from e
+
+    def get_aligned_daily_data(
+        self,
+        ticker: str,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None,
+        indicators: Optional[List[str]] = None
+    ) -> pd.DataFrame:
+        """
+        Retrieve aligned daily data for analysis.
+        
+        Args:
+            ticker: Ticker symbol
+            start_date: Start date for data (optional)
+            end_date: End date for data (optional)
+            indicators: List of specific indicators to include (optional)
+            
+        Returns:
+            DataFrame with aligned daily data
+        """
+        ticker = validate_ticker(ticker)
+        
+        try:
+            with self.get_session() as session:
+                # Get instrument
+                instrument = session.query(Instrument).filter(
+                    Instrument.ticker_symbol == ticker
+                ).first()
+                
+                if not instrument:
+                    raise DatabaseError(f"Instrument not found for ticker {ticker}")
+                
+                # Build query
+                query = session.query(AlignedDailyData).filter(
+                    AlignedDailyData.instrument_id == instrument.id
+                )
+                
+                if start_date:
+                    query = query.filter(AlignedDailyData.date >= start_date)
+                if end_date:
+                    query = query.filter(AlignedDailyData.date <= end_date)
+                
+                query = query.order_by(AlignedDailyData.date)
+                
+                # Execute query
+                results = query.all()
+                
+                if not results:
+                    self.logger.warning(f"No aligned data found for {ticker}")
+                    return pd.DataFrame()
+                
+                # Convert to DataFrame
+                data = []
+                for result in results:
+                    record = {
+                        'date': result.date,
+                        'open': result.open_price,
+                        'high': result.high_price,
+                        'low': result.low_price,
+                        'close': result.close_price,
+                        'adjusted_close': result.adjusted_close,
+                        'volume': result.volume,
+                        'trading_calendar': result.trading_calendar
+                    }
+                    
+                    # Add economic indicators
+                    economic_fields = {
+                        'inflation_monthly_us': result.inflation_monthly_us,
+                        'inflation_index_monthly_us': result.inflation_index_monthly_us,
+                        'unemployment_monthly_rate_us': result.unemployment_monthly_rate_us,
+                        'interest_rate_monthly_us': result.interest_rate_monthly_us,
+                        'inflation_monthly_euro': result.inflation_monthly_euro,
+                        'unemployment_rate_monthly_euro': result.unemployment_rate_monthly_euro,
+                        'interest_rate_change_day_euro': result.interest_rate_change_day_euro,
+                        'interest_rate_monthly_euro': result.interest_rate_monthly_euro
+                    }
+                    
+                    # Only include indicators if specified or include all
+                    if indicators:
+                        for indicator in indicators:
+                            if indicator in economic_fields:
+                                record[indicator] = economic_fields[indicator]
+                    else:
+                        record.update(economic_fields)
+                    
+                    data.append(record)
+                
+                df = pd.DataFrame(data)
+                df.set_index('date', inplace=True)
+                
+                self.logger.info(f"Retrieved {len(df)} aligned records for {ticker}")
+                return df
+                
+        except Exception as e:
+            self.logger.error(f"Failed to get aligned data for {ticker}: {e}")
+            raise DatabaseError(f"Failed to get aligned data for {ticker}: {e}") from e
+
+    def get_aligned_data_coverage(self, ticker: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Get coverage statistics for aligned daily data.
+        
+        Args:
+            ticker: Optional ticker to filter by
+            
+        Returns:
+            Coverage statistics
+        """
+        try:
+            with self.get_session() as session:
+                query = session.query(AlignedDailyData)
+                
+                if ticker:
+                    ticker = validate_ticker(ticker)
+                    instrument = session.query(Instrument).filter(
+                        Instrument.ticker_symbol == ticker
+                    ).first()
+                    if not instrument:
+                        raise DatabaseError(f"Instrument not found for ticker {ticker}")
+                    query = query.filter(AlignedDailyData.instrument_id == instrument.id)
+                
+                # Get basic counts
+                total_records = query.count()
+                if total_records == 0:
+                    return {'total_records': 0}
+                
+                # Get date range
+                min_date = query.order_by(AlignedDailyData.date).first().date
+                max_date = query.order_by(AlignedDailyData.date.desc()).first().date
+                
+                # Get coverage by field
+                coverage = {
+                    'total_records': total_records,
+                    'date_range': {'start': min_date, 'end': max_date},
+                    'field_coverage': {}
+                }
+                
+                # Check coverage for each field
+                price_fields = ['open_price', 'close_price', 'volume']
+                economic_fields = [
+                    'inflation_monthly_us', 'unemployment_monthly_rate_us',
+                    'interest_rate_monthly_us', 'inflation_monthly_euro',
+                    'unemployment_rate_monthly_euro', 'interest_rate_change_day_euro'
+                ]
+                
+                for field in price_fields + economic_fields:
+                    non_null_count = query.filter(
+                        getattr(AlignedDailyData, field).isnot(None)
+                    ).count()
+                    coverage['field_coverage'][field] = {
+                        'records_with_data': non_null_count,
+                        'coverage_percentage': (non_null_count / total_records) * 100
+                    }
+                
+                return coverage
+                
+        except Exception as e:
+            self.logger.error(f"Failed to get aligned data coverage: {e}")
+            raise DatabaseError(f"Failed to get aligned data coverage: {e}") from e
+
+    def clear_aligned_daily_data(
+        self, 
+        ticker: Optional[str] = None,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None
+    ) -> int:
+        """
+        Clear aligned daily data from database.
+        
+        Args:
+            ticker: Optional ticker to filter by
+            start_date: Optional start date filter
+            end_date: Optional end date filter
+            
+        Returns:
+            Number of records deleted
+        """
+        try:
+            with self.get_session() as session:
+                query = session.query(AlignedDailyData)
+                
+                if ticker:
+                    ticker = validate_ticker(ticker)
+                    instrument = session.query(Instrument).filter(
+                        Instrument.ticker_symbol == ticker
+                    ).first()
+                    if not instrument:
+                        raise DatabaseError(f"Instrument not found for ticker {ticker}")
+                    query = query.filter(AlignedDailyData.instrument_id == instrument.id)
+                
+                if start_date:
+                    query = query.filter(AlignedDailyData.date >= start_date)
+                if end_date:
+                    query = query.filter(AlignedDailyData.date <= end_date)
+                
+                deleted_count = query.delete(synchronize_session=False)
+                session.commit()
+                
+                self.logger.info(f"Cleared {deleted_count} aligned daily records")
+                return deleted_count
+                
+        except Exception as e:
+            self.logger.error(f"Failed to clear aligned daily data: {e}")
+            raise DatabaseError(f"Failed to clear aligned daily data: {e}") from e

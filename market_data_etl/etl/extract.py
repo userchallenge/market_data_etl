@@ -12,7 +12,7 @@ import pandas as pd
 
 from ..utils.logging import get_logger
 from ..utils.exceptions import YahooFinanceError
-from ..data.fetchers import DataFetcher
+from ..data.fetchers import DataFetcher, PriceFetcher
 
 
 class FinancialDataExtractor(DataFetcher):
@@ -147,12 +147,14 @@ class PriceDataExtractor(DataFetcher):
     
     Responsibility: EXTRACT ONLY
     - Fetch raw price data from yfinance API
+    - Detect instrument type automatically
     - Handle retry logic and errors  
     - Return raw data as-is (no transformation)
     """
     
     def __init__(self):
         super().__init__()
+        self.price_fetcher = PriceFetcher()
     
     def extract_price_data(
         self,
@@ -178,23 +180,13 @@ class PriceDataExtractor(DataFetcher):
             end_date = date.today()
         
         def _extract():
-            self.logger.info(f"Extracting raw price data for {ticker} from {start_date} to {end_date}")
+            self.logger.info(f"Extracting raw price data and instrument info for {ticker} from {start_date} to {end_date}")
             
             try:
-                yf_ticker = yf.Ticker(ticker)
-                
-                # Extract raw price data
-                # Add one day to end_date for exclusive range (yfinance requirement)
-                end_date_exclusive = end_date + timedelta(days=1)
-                raw_price_data = yf_ticker.history(
-                    start=start_date.strftime('%Y-%m-%d'),
-                    end=end_date_exclusive.strftime('%Y-%m-%d'),
-                    auto_adjust=False,
-                    prepost=False
+                # Use the new method that fetches price data AND detects instrument type
+                raw_price_data, instrument_type, instrument_info = self.price_fetcher.fetch_price_data_with_instrument_info(
+                    ticker, start_date, end_date
                 )
-                
-                if raw_price_data.empty:
-                    raise YahooFinanceError(f"No price data found for ticker {ticker}")
                 
                 return {
                     'ticker': ticker,
@@ -203,7 +195,9 @@ class PriceDataExtractor(DataFetcher):
                     'extraction_timestamp': datetime.utcnow().isoformat(),
                     'raw_data': raw_price_data,
                     'data_type': type(raw_price_data).__name__,
-                    'shape': raw_price_data.shape
+                    'shape': raw_price_data.shape,
+                    'instrument_type': instrument_type,
+                    'instrument_info': instrument_info
                 }
                 
             except Exception as e:

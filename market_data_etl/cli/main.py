@@ -24,7 +24,14 @@ from .commands import (
     portfolio_info_command,
     fetch_economic_indicator_command,
     load_price_csv_command,
-    generate_price_csv_template_command
+    generate_price_csv_template_command,
+    update_instrument_types_command,
+    align_data_command,
+    alignment_info_command,
+    alignment_pairs_command,
+    rebuild_aligned_data_command,
+    query_aligned_data_command,
+    aligned_data_info_command
 )
 
 
@@ -45,6 +52,15 @@ Examples:
   %(prog)s fetch-portfolio-prices --portfolio "My Portfolio" --from 2024-01-01
   %(prog)s generate-price-csv-template --ticker ^OMXS30 --output omxs30_template.csv
   %(prog)s load-price-csv --file omxs30_data.csv --ticker ^OMXS30
+  %(prog)s align-data --ticker AAPL --economic-indicator inflation_monthly_us
+  %(prog)s align-data --ticker MSFT --economic-indicator unemployment_monthly_rate_us --from 2024-01-01 --method forward_fill
+  %(prog)s alignment-info
+  %(prog)s alignment-pairs --limit 10
+  %(prog)s rebuild-aligned-data --ticker AAPL --from 2024-01-01
+  %(prog)s rebuild-aligned-data --from 2024-01-01 --to 2024-12-31
+  %(prog)s query-aligned-data --ticker AAPL --from 2024-01-01 --output detailed
+  %(prog)s query-aligned-data --ticker ESSITY-B.ST --indicators inflation_monthly_euro
+  %(prog)s aligned-data-info
   
 Environment Variables:
   MARKET_DATA_DB_PATH         Database file path (default: market_data.db)
@@ -91,6 +107,12 @@ Environment Variables:
         '--to',
         dest='to_date',
         help='End date in YYYY-MM-DD format (defaults to today)'
+    )
+    prices_parser.add_argument(
+        '--instrument-type',
+        dest='instrument_type',
+        choices=['stock', 'fund', 'etf', 'index', 'commodity', 'currency', 'cryptocurrency', 'unknown'],
+        help='Manually specify instrument type (overrides auto-detection)'
     )
     
     # fetch-financial-statements command
@@ -266,6 +288,143 @@ Environment Variables:
         help='Output CSV file path'
     )
     
+    # update-instrument-types command
+    update_types_parser = subparsers.add_parser(
+        'update-instrument-types',
+        help='Update existing instruments with correct types using auto-detection'
+    )
+    update_types_parser.add_argument(
+        '--dry-run',
+        action='store_true',
+        help='Show what would be changed without making updates'
+    )
+    
+    # align-data command
+    align_parser = subparsers.add_parser(
+        'align-data',
+        help='Align price data with economic indicators for analysis'
+    )
+    align_parser.add_argument(
+        '--ticker',
+        required=True,
+        help='Instrument ticker symbol (e.g., AAPL, MSFT)'
+    )
+    align_parser.add_argument(
+        '--economic-indicator',
+        required=True,
+        dest='economic_indicator',
+        help='Economic indicator name (e.g., inflation_monthly_us, unemployment_monthly_rate_us)'
+    )
+    align_parser.add_argument(
+        '--from',
+        dest='from_date',
+        help='Start date in YYYY-MM-DD format (optional)'
+    )
+    align_parser.add_argument(
+        '--to',
+        dest='to_date',
+        help='End date in YYYY-MM-DD format (optional)'
+    )
+    align_parser.add_argument(
+        '--method',
+        dest='alignment_method',
+        choices=['last_of_period', 'first_of_period', 'forward_fill', 'nearest'],
+        default='last_of_period',
+        help='Alignment method (default: last_of_period)'
+    )
+    align_parser.add_argument(
+        '--output',
+        dest='output_format',
+        choices=['summary', 'detailed', 'csv'],
+        default='summary',
+        help='Output format (default: summary)'
+    )
+    
+    # alignment-info command
+    alignment_info_parser = subparsers.add_parser(
+        'alignment-info',
+        help='Show data alignment system information and capabilities'
+    )
+    
+    # alignment-pairs command
+    alignment_pairs_parser = subparsers.add_parser(
+        'alignment-pairs',
+        help='Show available instrument-economic indicator pairs for alignment'
+    )
+    alignment_pairs_parser.add_argument(
+        '--limit',
+        type=int,
+        default=20,
+        help='Maximum number of pairs to show (default: 20)'
+    )
+    
+    # rebuild-aligned-data command
+    rebuild_aligned_parser = subparsers.add_parser(
+        'rebuild-aligned-data',
+        help='Rebuild trading-day aligned data with forward-filled economic indicators'
+    )
+    rebuild_aligned_parser.add_argument(
+        '--ticker',
+        action='append',
+        dest='tickers',
+        help='Ticker symbol(s) to rebuild (can be used multiple times, default: all tickers)'
+    )
+    rebuild_aligned_parser.add_argument(
+        '--from',
+        dest='from_date',
+        help='Start date in YYYY-MM-DD format (optional)'
+    )
+    rebuild_aligned_parser.add_argument(
+        '--to',
+        dest='to_date', 
+        help='End date in YYYY-MM-DD format (optional)'
+    )
+    rebuild_aligned_parser.add_argument(
+        '--no-clear',
+        action='store_false',
+        dest='clear_existing',
+        help='Do not clear existing aligned data before rebuilding'
+    )
+    
+    # query-aligned-data command
+    query_aligned_parser = subparsers.add_parser(
+        'query-aligned-data',
+        help='Query trading-day aligned data for analysis'
+    )
+    query_aligned_parser.add_argument(
+        '--ticker',
+        required=True,
+        help='Instrument ticker symbol (e.g., AAPL, ESSITY-B.ST)'
+    )
+    query_aligned_parser.add_argument(
+        '--from',
+        dest='from_date',
+        help='Start date in YYYY-MM-DD format (optional)'
+    )
+    query_aligned_parser.add_argument(
+        '--to',
+        dest='to_date',
+        help='End date in YYYY-MM-DD format (optional)'
+    )
+    query_aligned_parser.add_argument(
+        '--indicators',
+        nargs='+',
+        help='Specific economic indicators to include (e.g., inflation_monthly_us unemployment_monthly_rate_us)'
+    )
+    query_aligned_parser.add_argument(
+        '--output',
+        dest='output_format',
+        choices=['summary', 'detailed', 'csv'],
+        default='summary',
+        help='Output format (default: summary)'
+    )
+    
+    # aligned-data-info command
+    aligned_data_info_parser = subparsers.add_parser(
+        'aligned-data-info',
+        help='Show aligned data system information and coverage statistics'
+    )
+    
     return parser
 
 
@@ -288,7 +447,8 @@ def main() -> NoReturn:
             exit_code = fetch_prices_command(
                 ticker=args.ticker,
                 from_date=args.from_date,
-                to_date=args.to_date
+                to_date=args.to_date,
+                instrument_type=getattr(args, 'instrument_type', None)
             )
         elif args.command == 'fetch-financial-statements':
             exit_code = fetch_financial_statements_command(
@@ -338,6 +498,42 @@ def main() -> NoReturn:
                 ticker=args.ticker,
                 output_file=args.output
             )
+        elif args.command == 'update-instrument-types':
+            exit_code = update_instrument_types_command(
+                dry_run=args.dry_run
+            )
+        elif args.command == 'align-data':
+            exit_code = align_data_command(
+                ticker=args.ticker,
+                economic_indicator=args.economic_indicator,
+                from_date=getattr(args, 'from_date', None),
+                to_date=getattr(args, 'to_date', None),
+                alignment_method=args.alignment_method,
+                output_format=args.output_format
+            )
+        elif args.command == 'alignment-info':
+            exit_code = alignment_info_command()
+        elif args.command == 'alignment-pairs':
+            exit_code = alignment_pairs_command(
+                limit=args.limit
+            )
+        elif args.command == 'rebuild-aligned-data':
+            exit_code = rebuild_aligned_data_command(
+                tickers=getattr(args, 'tickers', None),
+                from_date=getattr(args, 'from_date', None),
+                to_date=getattr(args, 'to_date', None),
+                clear_existing=getattr(args, 'clear_existing', True)
+            )
+        elif args.command == 'query-aligned-data':
+            exit_code = query_aligned_data_command(
+                ticker=args.ticker,
+                from_date=getattr(args, 'from_date', None),
+                to_date=getattr(args, 'to_date', None),
+                indicators=getattr(args, 'indicators', None),
+                output_format=getattr(args, 'output_format', 'summary')
+            )
+        elif args.command == 'aligned-data-info':
+            exit_code = aligned_data_info_command()
         else:
             print(f"ERROR: Unknown command: {args.command}")
             exit_code = 1

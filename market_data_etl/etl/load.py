@@ -6,12 +6,12 @@ No extraction or transformation logic should be here.
 """
 
 from typing import Dict, Any, Optional, List
-from datetime import datetime
+from datetime import datetime, date
 import pandas as pd
 
 from ..utils.logging import get_logger
 from ..database.manager import DatabaseManager
-from ..data.models import Company, Price, IncomeStatement, BalanceSheet, CashFlow, FinancialRatio
+from ..data.models import Instrument, Price, IncomeStatement, BalanceSheet, CashFlow, FinancialRatio
 
 
 class FinancialDataLoader:
@@ -104,8 +104,11 @@ class FinancialDataLoader:
                 self.logger.warning(f"No price data to load for {ticker}")
                 return loading_results
             
+            # Extract instrument type from transformed data
+            instrument_type = transformed_price_data.get('instrument_type')
+            
             # Load price data to database
-            loaded_count = self._load_price_dataframe(ticker, transformed_df)
+            loaded_count = self._load_price_dataframe(ticker, transformed_df, instrument_type)
             loading_results['loaded_records'] = loaded_count
             
             self.logger.info(f"Successfully loaded {loaded_count} price records for {ticker}")
@@ -119,14 +122,14 @@ class FinancialDataLoader:
         return loading_results
     
     
-    def _load_price_dataframe(self, ticker: str, price_df: pd.DataFrame) -> int:
+    def _load_price_dataframe(self, ticker: str, price_df: pd.DataFrame, instrument_type=None) -> int:
         """Load price DataFrame into database using unified interface."""
         if price_df.empty:
             return 0
         
         try:
-            # Use DatabaseManager's unified store_price_data method
-            loaded_count = self.db_manager.store_price_data(ticker, price_df)
+            # Use DatabaseManager's unified store_price_data method with instrument type
+            loaded_count = self.db_manager.store_price_data(ticker, price_df, instrument_type)
             return loaded_count
             
         except Exception as e:
@@ -218,14 +221,15 @@ class ETLOrchestrator:
         
         return etl_results
     
-    def run_price_etl(self, ticker: str, start_date, end_date=None) -> Dict[str, Any]:
+    def run_price_etl(self, ticker: str, start_date, end_date=None, manual_instrument_type=None) -> Dict[str, Any]:
         """
         Run complete price data ETL pipeline.
         
         Args:
-            ticker: Stock ticker symbol
+            ticker: Ticker symbol
             start_date: Start date for price data
             end_date: End date for price data (optional)
+            manual_instrument_type: Manual instrument type override (optional)
             
         Returns:
             ETL results with statistics from each phase
@@ -242,6 +246,12 @@ class ETLOrchestrator:
             # EXTRACT phase
             self.logger.info(f"Extract phase: extracting raw price data for {ticker}")
             raw_price_data = self.price_extractor.extract_price_data(ticker, start_date, end_date)
+            
+            # Apply manual instrument type override if specified
+            if manual_instrument_type:
+                self.logger.info(f"Applying manual instrument type override: {manual_instrument_type.value}")
+                raw_price_data['instrument_type'] = manual_instrument_type
+            
             etl_results['phases']['extract'] = {
                 'status': 'completed',
                 'shape': raw_price_data.get('shape'),
@@ -592,3 +602,260 @@ class EconomicETLOrchestrator:
             raise e
         
         return etl_results
+
+
+class AlignedDataETLOrchestrator:
+    """
+    Orchestrates the complete aligned data ETL pipeline.
+    
+    This class coordinates the process of:
+    1. Extracting price and economic data from existing database
+    2. Transforming economic data with forward-fill to trading calendar
+    3. Loading aligned data into the unified aligned_daily_data table
+    """
+    
+    def __init__(self, db_manager: Optional[DatabaseManager] = None):
+        self.logger = get_logger(__name__)
+        self.db_manager = db_manager or DatabaseManager()
+        
+        # Import transformer here to avoid circular imports
+        from ..data.forward_fill import forward_fill_transformer
+        from ..utils.trading_calendar import trading_calendar
+        
+        self.transformer = forward_fill_transformer
+        self.trading_calendar = trading_calendar
+    
+    def rebuild_aligned_data(
+        self,
+        tickers: Optional[List[str]] = None,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None,
+        clear_existing: bool = True
+    ) -> Dict[str, Any]:
+        """
+        Rebuild aligned data for specified tickers and date range.
+        
+        Args:
+            tickers: List of ticker symbols to process (None for all)
+            start_date: Start date for alignment (None for all available)
+            end_date: End date for alignment (None for today)
+            clear_existing: Whether to clear existing aligned data
+            
+        Returns:
+            Dictionary with rebuild results and statistics
+        """
+        self.logger.info(f"Starting aligned data rebuild for {len(tickers) if tickers else 'all'} tickers")
+        
+        rebuild_results = {
+            'pipeline_start': datetime.utcnow().isoformat(),
+            'tickers_processed': 0,
+            'total_records_created': 0,
+            'errors': [],
+            'statistics': {}
+        }
+        
+        try:
+            # Get list of tickers to process
+            if not tickers:
+                # Get all tickers with price data
+                tickers = self._get_all_tickers_with_data()
+            
+            if not tickers:
+                self.logger.warning("No tickers found to process")
+                return rebuild_results
+            
+            # Get economic data once for all tickers
+            economic_data = self._get_all_economic_data(start_date, end_date)
+            
+            # Process each ticker
+            for ticker in tickers:
+                try:
+                    ticker_results = self._rebuild_ticker_aligned_data(
+                        ticker, start_date, end_date, economic_data, clear_existing
+                    )
+                    
+                    rebuild_results['tickers_processed'] += 1
+                    rebuild_results['total_records_created'] += ticker_results['records_created']
+                    rebuild_results['statistics'][ticker] = ticker_results
+                    
+                    if ticker_results['records_created'] > 0:
+                        self.logger.info(
+                            f"✅ {ticker}: {ticker_results['records_created']} aligned records created"
+                        )
+                    
+                except Exception as e:
+                    error_msg = f"Failed to rebuild aligned data for {ticker}: {str(e)}"
+                    self.logger.error(error_msg)
+                    rebuild_results['errors'].append(error_msg)
+            
+            rebuild_results['pipeline_end'] = datetime.utcnow().isoformat()
+            
+            # Log summary
+            self.logger.info(
+                f"Aligned data rebuild complete: {rebuild_results['tickers_processed']} tickers, "
+                f"{rebuild_results['total_records_created']} records, "
+                f"{len(rebuild_results['errors'])} errors"
+            )
+            
+            return rebuild_results
+            
+        except Exception as e:
+            rebuild_results['pipeline_end'] = datetime.utcnow().isoformat()
+            error_msg = f"Aligned data rebuild failed: {str(e)}"
+            self.logger.error(error_msg)
+            rebuild_results['errors'].append(error_msg)
+            raise e
+    
+    def _rebuild_ticker_aligned_data(
+        self,
+        ticker: str,
+        start_date: Optional[date],
+        end_date: Optional[date],
+        economic_data: Dict[str, List[Dict[str, Any]]],
+        clear_existing: bool
+    ) -> Dict[str, Any]:
+        """Rebuild aligned data for a single ticker."""
+        
+        # Get instrument info
+        instrument_info = self.db_manager.get_instrument_info(ticker)
+        if not instrument_info:
+            raise ValueError(f"Instrument not found for ticker {ticker}")
+        
+        instrument_id = instrument_info['instrument_id']
+        
+        # Detect trading calendar for this ticker
+        exchange = self.trading_calendar.detect_exchange_from_ticker(ticker)
+        
+        # Get price data from database
+        price_data = self.db_manager.get_price_data(ticker, start_date, end_date)
+        
+        if price_data.empty:
+            self.logger.warning(f"No price data found for {ticker}")
+            return {'records_created': 0, 'trading_days': 0, 'exchange': exchange}
+        
+        # Determine date range from available data
+        if price_data.empty:
+            actual_start_date = start_date or date(2020, 1, 1)
+            actual_end_date = end_date or date.today()
+        else:
+            price_start = price_data.index.min().date() if hasattr(price_data.index.min(), 'date') else price_data.index.min()
+            price_end = price_data.index.max().date() if hasattr(price_data.index.max(), 'date') else price_data.index.max()
+            
+            actual_start_date = max(start_date or price_start, price_start)
+            actual_end_date = min(end_date or price_end, price_end)
+        
+        # Get trading calendar for this ticker
+        trading_days = self.transformer.get_date_range_for_instrument(
+            ticker, actual_start_date, actual_end_date, exchange
+        )
+        
+        if not trading_days:
+            return {'records_created': 0, 'trading_days': 0, 'exchange': exchange}
+        
+        # Forward-fill economic data to trading calendar
+        aligned_economic_df = self.transformer.forward_fill_economic_data(
+            economic_data, trading_days, exchange
+        )
+        
+        # Combine price data with forward-filled economic data
+        aligned_df = self.transformer.align_price_with_economic_data(
+            price_data, aligned_economic_df, ticker
+        )
+        
+        if aligned_df.empty:
+            return {'records_created': 0, 'trading_days': len(trading_days), 'exchange': exchange}
+        
+        # Create database records
+        aligned_records = self.transformer.create_aligned_daily_records(
+            ticker, aligned_df, instrument_id, exchange
+        )
+        
+        # Store in database
+        records_created = 0
+        if aligned_records:
+            records_created = self.db_manager.store_aligned_daily_data(
+                aligned_records, clear_existing=clear_existing
+            )
+        
+        return {
+            'records_created': records_created,
+            'trading_days': len(trading_days),
+            'exchange': exchange,
+            'date_range': {
+                'start': actual_start_date,
+                'end': actual_end_date
+            }
+        }
+    
+    def _get_all_tickers_with_data(self) -> List[str]:
+        """Get all tickers that have price data in database."""
+        try:
+            instruments_info = self.db_manager.get_all_instruments_info()
+            
+            tickers_with_data = []
+            for info in instruments_info:
+                ticker = info['ticker_symbol']
+                # Quick check if ticker has any price data
+                price_count = self.db_manager.get_price_data_count(ticker)
+                if price_count > 0:
+                    tickers_with_data.append(ticker)
+            
+            self.logger.info(f"Found {len(tickers_with_data)} tickers with price data")
+            return tickers_with_data
+            
+        except Exception as e:
+            self.logger.error(f"Failed to get tickers with data: {e}")
+            return []
+    
+    def _get_all_economic_data(
+        self, 
+        start_date: Optional[date], 
+        end_date: Optional[date]
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """Get all economic indicator data for the date range."""
+        
+        economic_data = {}
+        
+        try:
+            # Get all economic indicators
+            indicators = self.db_manager.get_all_economic_indicators()
+            
+            for indicator in indicators:
+                indicator_name = indicator['name']
+                
+                # Get data for this indicator
+                indicator_data = self.db_manager.get_economic_data(
+                    indicator_name, start_date, end_date
+                )
+                
+                if not indicator_data.empty:
+                    # Convert DataFrame to list of dictionaries
+                    data_points = []
+                    # get_economic_data returns DataFrame with 'date' and 'value' columns
+                    for _, row in indicator_data.iterrows():
+                        date_val = row['date']
+                        value = row['value']
+                        if pd.notna(value):
+                            # Handle different date formats
+                            if hasattr(date_val, 'date'):
+                                date_obj = date_val.date()
+                            elif isinstance(date_val, str):
+                                date_obj = datetime.strptime(date_val, '%Y-%m-%d').date()
+                            else:
+                                date_obj = date_val
+                            
+                            data_points.append({
+                                'date': date_obj,
+                                'value': float(value)
+                            })
+                    
+                    if data_points:
+                        economic_data[indicator_name] = data_points
+                        self.logger.debug(f"Loaded {len(data_points)} points for {indicator_name}")
+            
+            self.logger.info(f"Loaded economic data for {len(economic_data)} indicators")
+            return economic_data
+            
+        except Exception as e:
+            self.logger.error(f"Failed to get economic data: {e}")
+            return {}

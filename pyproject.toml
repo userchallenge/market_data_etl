@@ -28,7 +28,8 @@ dependencies = [
     "yahooquery>=2.3.7",
     "sqlalchemy>=2.0.23", 
     "pandas>=2.1.4",
-    "requests>=2.31.0"
+    "requests>=2.31.0",
+    "pandas-market-calendars"
 ]
 
 [project.optional-dependencies]

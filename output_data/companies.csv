@@ -1,0 +1,6 @@
+id,ticker_symbol,isin,company_name,instrument_type,sector,industry,country,currency,market_cap,employees,founded_year,fund_type,created_at,updated_at
+1,ESSITY-B.ST,,Essity AB (publ),STOCK,Consumer Defensive,Household & Personal Products,Sweden,SEK,170161684480.0,36000.0,,,2025-08-12 15:19:20.641730,2025-08-15 15:13:30.828491
+2,0P00005U1J.ST,,Avanza Zero,STOCK,,,,SEK,,,,,2025-08-12 15:28:52.637124,2025-08-12 15:29:49.601379
+4,^DJI,,,STOCK,,,,USD,,,,,2025-08-12 17:32:53.182482,2025-08-12 17:32:53.182485
+5,^GSPC,,,STOCK,,,,USD,,,,,2025-08-12 17:34:04.559397,2025-08-12 17:34:04.559401
+6,MINEST.ST,,Minesto AB (publ),STOCK,Utilities,Utilities - Renewable,Sweden,SEK,772166272.0,48.0,,,2025-08-12 17:41:11.747885,2025-08-15 15:13:33.474503

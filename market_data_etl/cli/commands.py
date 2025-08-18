@@ -17,6 +17,8 @@ from ..utils.logging import get_logger
 from ..utils.exceptions import YahooFinanceError, ValidationError, DatabaseError
 from ..utils.validation import validate_ticker, validate_date_string, validate_date_range, validate_years_parameter
 from ..data.models import InstrumentType
+from ..data.fetchers import detect_instrument_type, detect_from_symbol_pattern
+import yfinance as yf
 
 logger = get_logger(__name__)
 
@@ -28,6 +30,42 @@ ERROR_EXIT_CODE = 1
 # Status messages
 PERIOD_TYPE_ANNUAL = 'annual'
 PERIOD_TYPE_QUARTERLY = 'quarterly'
+
+
+# =============================================================================
+# BUSINESS LOGIC FUNCTIONS
+# =============================================================================
+
+def should_fetch_fundamentals(instrument_type: InstrumentType) -> bool:
+    """
+    Determine if fundamental data should be fetched for an instrument type.
+    
+    Only fetch fundamentals for stocks as indices, funds, ETFs, and 
+    commodities don't have traditional fundamental data.
+    
+    Args:
+        instrument_type: The type of financial instrument
+        
+    Returns:
+        True if fundamentals should be fetched, False otherwise
+    """
+    return instrument_type == InstrumentType.STOCK
+
+
+def should_fetch_constituents(instrument_type: InstrumentType) -> bool:
+    """
+    Determine if constituent data should be fetched for an instrument type.
+    
+    Fetch constituents for indices and some ETFs that track specific 
+    underlying assets.
+    
+    Args:
+        instrument_type: The type of financial instrument
+        
+    Returns:
+        True if constituents should be fetched, False otherwise
+    """
+    return instrument_type in [InstrumentType.INDEX, InstrumentType.ETF]
 
 
 def find_missing_dates_in_range(
@@ -62,15 +100,17 @@ def find_missing_dates_in_range(
 def fetch_prices_command(
     ticker: str,
     from_date: str,
-    to_date: Optional[str] = None
+    to_date: Optional[str] = None,
+    instrument_type: Optional[str] = None
 ) -> int:
     """
     Handle fetch-prices command using proper ETL pattern.
     
     Args:
-        ticker: Stock ticker symbol
+        ticker: Ticker symbol
         from_date: Start date in YYYY-MM-DD format
         to_date: End date in YYYY-MM-DD format (optional)
+        instrument_type: Manual instrument type override (optional)
         
     Returns:
         Exit code (0 for success, 1 for error)
@@ -81,6 +121,16 @@ def fetch_prices_command(
         end_date = validate_date_string(to_date, "to_date") if to_date else date.today()
         
         validate_date_range(start_date, end_date)
+        
+        # Handle manual instrument type override
+        manual_instrument_type = None
+        if instrument_type:
+            try:
+                manual_instrument_type = InstrumentType(instrument_type)
+                print(f"🔧 Manual override: Setting instrument type to {manual_instrument_type.value}")
+            except ValueError:
+                print(f"ERROR: Invalid instrument type '{instrument_type}'. Valid options: {[t.value for t in InstrumentType]}")
+                return ERROR_EXIT_CODE
         
         print(f"Running price ETL pipeline for {ticker} from {start_date} to {end_date}...")
         
@@ -102,7 +152,7 @@ def fetch_prices_command(
         earliest_missing = min(missing_dates)
         latest_missing = max(missing_dates)
         
-        etl_results = etl.run_price_etl(ticker, earliest_missing, latest_missing)
+        etl_results = etl.run_price_etl(ticker, earliest_missing, latest_missing, manual_instrument_type)
         
         # Report results
         if etl_results['status'] == 'completed':
@@ -177,16 +227,16 @@ def db_info_command(ticker: str) -> int:
             print("No data found for this ticker.")
             return 0
         
-        # Company info
-        company = info['company']
-        print(f"Company: {company['name'] or 'N/A'}")
-        print(f"Sector: {company['sector'] or 'N/A'}")
-        print(f"Industry: {company['industry'] or 'N/A'}")
-        print(f"Country: {company['country'] or 'N/A'}")
-        print(f"Currency: {company['currency']}")
-        if company['market_cap']:
-            print(f"Market Cap: {company['currency']} {company['market_cap']:,.0f}")
-        print(f"Created: {company['created_at']}")
+        # Instrument info
+        instrument = info['instrument']
+        print(f"Instrument: {instrument['name'] or 'N/A'}")
+        print(f"Sector: {instrument['sector'] or 'N/A'}")
+        print(f"Industry: {instrument['industry'] or 'N/A'}")
+        print(f"Country: {instrument['country'] or 'N/A'}")
+        print(f"Currency: {instrument['currency']}")
+        if instrument['market_cap']:
+            print(f"Market Cap: {instrument['currency']} {instrument['market_cap']:,.0f}")
+        print(f"Created: {instrument['created_at']}")
         
         # Price data info
         price_data = info['price_data']
@@ -246,6 +296,18 @@ def fetch_financial_statements_command(
     """
     try:
         ticker = validate_ticker(ticker)
+        
+        # Check if this instrument type should have fundamentals fetched
+        db = DatabaseManager()
+        ticker_info = db.get_ticker_info(ticker)
+        
+        if ticker_info and ticker_info.get('instrument_type'):
+            instrument_type = InstrumentType(ticker_info['instrument_type'])
+            if not should_fetch_fundamentals(instrument_type):
+                print(f"⚠️  Skipping fundamental data for {ticker} (instrument type: {instrument_type.value})")
+                print("Fundamental data is only available for stocks.")
+                print("Indices, funds, ETFs, and commodities don't have traditional fundamental data.")
+                return SUCCESS_EXIT_CODE
         
         print(f"Running financial ETL pipeline for {ticker}...")
         if quarterly:
@@ -324,28 +386,28 @@ def financial_summary_command(
         db = DatabaseManager()
         
         # Get comprehensive financial summary
-        summary = db.get_company_financial_summary(ticker, years)
+        summary = db.get_instrument_financial_summary(ticker, years)
         
         if not summary:
             print(f"No financial data found for {ticker}.")
             print("Try running: market-data-etl fetch-financial-statements --ticker {ticker}")
             return 0
         
-        company = summary['company']
+        instrument = summary['instrument']
         data_summary = summary['data_summary']
         latest = summary['latest_data']
         
-        # Display company information
-        print(f"\n🏢 {company['name']} ({company['ticker']})")
+        # Display instrument information
+        print(f"\n🏢 {instrument['name']} ({instrument['ticker']})")
         print("=" * 60)
-        print(f"Sector: {company['sector'] or 'N/A'}")
-        print(f"Industry: {company['industry'] or 'N/A'}")
-        print(f"Country: {company['country'] or 'N/A'}")
-        print(f"Currency: {company['currency']}")
-        if company['market_cap']:
-            print(f"Market Cap: {company['currency']} {company['market_cap']:,.0f}")
-        if company['employees']:
-            print(f"Employees: {company['employees']:,}")
+        print(f"Sector: {instrument['sector'] or 'N/A'}")
+        print(f"Industry: {instrument['industry'] or 'N/A'}")
+        print(f"Country: {instrument['country'] or 'N/A'}")
+        print(f"Currency: {instrument['currency']}")
+        if instrument['market_cap']:
+            print(f"Market Cap: {instrument['currency']} {instrument['market_cap']:,.0f}")
+        if instrument['employees']:
+            print(f"Employees: {instrument['employees']:,}")
         
         # Display data availability
         print(f"\n📈 Financial Data Summary ({years} years)")
@@ -664,14 +726,14 @@ def fetch_portfolio_prices_command(
         
         # Get portfolio holdings with ticker information
         with db.get_session() as session:
-            from ..data.models import Portfolio, PortfolioHolding, Company
+            from ..data.models import Portfolio, PortfolioHolding, Instrument
             
             portfolio = session.query(Portfolio).filter(
                 Portfolio.name == portfolio_name
             ).first()
             
-            holdings = session.query(PortfolioHolding, Company).join(
-                Company, PortfolioHolding.company_id == Company.id
+            holdings = session.query(PortfolioHolding, Instrument).join(
+                Instrument, PortfolioHolding.instrument_id == Instrument.id
             ).filter(PortfolioHolding.portfolio_id == portfolio.id).all()
             
             if not holdings:
@@ -684,21 +746,21 @@ def fetch_portfolio_prices_command(
         results = []
         errors = []
         
-        for holding, company in holdings:
-            ticker = company.ticker_symbol
+        for holding, instrument in holdings:
+            ticker = instrument.ticker_symbol
             
             # Skip instruments without yahoo ticker
             if not ticker or ticker == 'None':
-                if company.isin:
-                    print(f"⚠️  Skipping {company.company_name} ({company.isin}): No Yahoo ticker available")
-                    errors.append(f"No Yahoo ticker for {company.company_name}")
+                if instrument.isin:
+                    print(f"⚠️  Skipping {instrument.instrument_name} ({instrument.isin}): No Yahoo ticker available")
+                    errors.append(f"No Yahoo ticker for {instrument.instrument_name}")
                 else:
-                    print(f"⚠️  Skipping {company.company_name}: No ticker or ISIN available")
-                    errors.append(f"No ticker for {company.company_name}")
+                    print(f"⚠️  Skipping {instrument.instrument_name}: No ticker or ISIN available")
+                    errors.append(f"No ticker for {instrument.instrument_name}")
                 continue
             
             try:
-                print(f"📈 Fetching {ticker} ({company.company_name})...")
+                print(f"📈 Fetching {ticker} ({instrument.instrument_name})...")
                 
                 # Check for existing data
                 existing_dates = db.get_existing_price_dates(ticker)
@@ -714,7 +776,7 @@ def fetch_portfolio_prices_command(
                 # Run ETL pipeline
                 earliest_missing = min(missing_dates)
                 latest_missing = max(missing_dates)
-                etl_results = etl.run_price_etl(ticker, earliest_missing, latest_missing)
+                etl_results = etl.run_price_etl(ticker, earliest_missing, latest_missing, manual_instrument_type)
                 
                 if etl_results['status'] == 'completed':
                     loaded_records = etl_results['phases']['load']['loaded_records']
@@ -787,18 +849,18 @@ def fetch_portfolio_fundamentals_command(portfolio_name: str) -> int:
         
         # Get portfolio holdings - only stocks
         with db.get_session() as session:
-            from ..data.models import Portfolio, PortfolioHolding, Company
+            from ..data.models import Portfolio, PortfolioHolding, Instrument
             
             portfolio = session.query(Portfolio).filter(
                 Portfolio.name == portfolio_name
             ).first()
             
             # Filter for stocks only
-            stock_holdings = session.query(PortfolioHolding, Company).join(
-                Company, PortfolioHolding.company_id == Company.id
+            stock_holdings = session.query(PortfolioHolding, Instrument).join(
+                Instrument, PortfolioHolding.instrument_id == Instrument.id
             ).filter(
                 PortfolioHolding.portfolio_id == portfolio.id,
-                Company.instrument_type == InstrumentType.STOCK
+                Instrument.instrument_type == InstrumentType.STOCK
             ).all()
             
             total_holdings = session.query(PortfolioHolding).filter(
@@ -815,17 +877,17 @@ def fetch_portfolio_fundamentals_command(portfolio_name: str) -> int:
         results = []
         errors = []
         
-        for holding, company in stock_holdings:
-            ticker = company.ticker_symbol
+        for holding, instrument in stock_holdings:
+            ticker = instrument.ticker_symbol
             
             # Skip instruments without yahoo ticker
             if not ticker or ticker == 'None':
-                print(f"⚠️  Skipping {company.company_name}: No Yahoo ticker available")
-                errors.append(f"No Yahoo ticker for {company.company_name}")
+                print(f"⚠️  Skipping {instrument.instrument_name}: No Yahoo ticker available")
+                errors.append(f"No Yahoo ticker for {instrument.instrument_name}")
                 continue
             
             try:
-                print(f"📊 Fetching fundamentals for {ticker} ({company.company_name})...")
+                print(f"📊 Fetching fundamentals for {ticker} ({instrument.instrument_name})...")
                 
                 # Run financial ETL pipeline
                 etl_results = etl.run_financial_etl(ticker)
@@ -916,14 +978,14 @@ def portfolio_info_command(portfolio_name: str) -> int:
         
         # Get detailed holdings information
         with db.get_session() as session:
-            from ..data.models import Portfolio, PortfolioHolding, Company
+            from ..data.models import Portfolio, PortfolioHolding, Instrument
             
             portfolio_db = session.query(Portfolio).filter(
                 Portfolio.name == portfolio_name
             ).first()
             
-            detailed_holdings = session.query(PortfolioHolding, Company).join(
-                Company, PortfolioHolding.company_id == Company.id
+            detailed_holdings = session.query(PortfolioHolding, Instrument).join(
+                Instrument, PortfolioHolding.instrument_id == Instrument.id
             ).filter(PortfolioHolding.portfolio_id == portfolio_db.id).all()
             
             if detailed_holdings:
@@ -932,12 +994,12 @@ def portfolio_info_command(portfolio_name: str) -> int:
                 print(f"{'Ticker':<15} {'Name':<30} {'Type':<10} {'Country':<8} {'Sector':<20}")
                 print("-" * 80)
                 
-                for holding, company in detailed_holdings:
-                    ticker = company.ticker_symbol or company.isin or 'N/A'
-                    name = company.company_name[:28] + '..' if len(company.company_name) > 30 else company.company_name
-                    instrument_type = company.instrument_type.value if company.instrument_type else 'N/A'
-                    country = company.country or 'N/A'
-                    sector = (company.sector or '')[:18] + '..' if len(company.sector or '') > 20 else (company.sector or 'N/A')
+                for holding, instrument in detailed_holdings:
+                    ticker = instrument.ticker_symbol or instrument.isin or 'N/A'
+                    name = instrument.instrument_name[:28] + '..' if len(instrument.instrument_name) > 30 else instrument.instrument_name
+                    instrument_type = instrument.instrument_type.value if instrument.instrument_type else 'N/A'
+                    country = instrument.country or 'N/A'
+                    sector = (instrument.sector or '')[:18] + '..' if len(instrument.sector or '') > 20 else (instrument.sector or 'N/A')
                     
                     print(f"{ticker:<15} {name:<30} {instrument_type:<10} {country:<8} {sector:<20}")
         
@@ -1109,6 +1171,120 @@ def economic_info_command(indicator_name: str) -> int:
         return ERROR_EXIT_CODE
 
 
+def update_instrument_types_command(dry_run: bool = False) -> int:
+    """
+    Update existing companies table with correct instrument types using auto-detection.
+    
+    Args:
+        dry_run: If True, only show what would be changed without making updates
+        
+    Returns:
+        Exit code (0 for success, 1 for error)
+    """
+    try:
+        print("🔍 Analyzing existing instruments for type detection...")
+        if dry_run:
+            print("📋 DRY RUN MODE: No changes will be made")
+        
+        db = DatabaseManager()
+        
+        # Get all instruments from database
+        with db.get_session() as session:
+            from ..data.models import Instrument
+            instruments = session.query(Instrument).all()
+        
+        if not instruments:
+            print("No instruments found in database.")
+            return SUCCESS_EXIT_CODE
+        
+        print(f"Found {len(instruments)} instruments to analyze")
+        
+        updates_needed = []
+        detection_stats = {
+            'total': len(instruments),
+            'correct': 0,
+            'needs_update': 0,
+            'errors': 0
+        }
+        
+        for instrument in instruments:
+            try:
+                # Detect current instrument type
+                ticker = instrument.ticker_symbol
+                print(f"Analyzing {ticker}...", end=' ')
+                
+                # Try to get Yahoo Finance info for detection
+                try:
+                    yf_ticker = yf.Ticker(ticker)
+                    info = yf_ticker.info
+                    detected_type = detect_instrument_type(ticker, info)
+                except Exception:
+                    # Fallback to pattern-based detection if Yahoo fails
+                    detected_type = detect_from_symbol_pattern(ticker)
+                
+                current_type = instrument.instrument_type
+                
+                if current_type == detected_type:
+                    print(f"✅ {current_type.value} (correct)")
+                    detection_stats['correct'] += 1
+                else:
+                    print(f"❌ {current_type.value} → {detected_type.value} (needs update)")
+                    detection_stats['needs_update'] += 1
+                    updates_needed.append({
+                        'ticker': ticker,
+                        'current': current_type,
+                        'detected': detected_type,
+                        'instrument_id': instrument.id
+                    })
+                
+            except Exception as e:
+                print(f"⚠️  Error analyzing {ticker}: {e}")
+                detection_stats['errors'] += 1
+        
+        # Print summary
+        print(f"\n📊 Detection Summary:")
+        print(f"  Total instruments: {detection_stats['total']}")
+        print(f"  Already correct: {detection_stats['correct']}")
+        print(f"  Need updates: {detection_stats['needs_update']}")
+        print(f"  Errors: {detection_stats['errors']}")
+        
+        if not updates_needed:
+            print("✅ All instruments have correct types!")
+            return SUCCESS_EXIT_CODE
+        
+        if dry_run:
+            print(f"\n📋 Would update {len(updates_needed)} instruments:")
+            for update in updates_needed:
+                print(f"  {update['ticker']}: {update['current'].value} → {update['detected'].value}")
+            print("\nRun without --dry-run to apply these changes.")
+            return SUCCESS_EXIT_CODE
+        
+        # Apply updates
+        print(f"\n🔧 Applying {len(updates_needed)} updates...")
+        
+        with db.get_session() as session:
+            updated_count = 0
+            for update in updates_needed:
+                try:
+                    instrument = session.query(Instrument).filter(Instrument.id == update['instrument_id']).first()
+                    if instrument:
+                        instrument.instrument_type = update['detected']
+                        print(f"  Updated {update['ticker']}: {update['current'].value} → {update['detected'].value}")
+                        updated_count += 1
+                except Exception as e:
+                    print(f"  ⚠️  Failed to update {update['ticker']}: {e}")
+            
+            session.commit()
+        
+        print(f"\n✅ Successfully updated {updated_count} instrument types!")
+        return SUCCESS_EXIT_CODE
+        
+    except Exception as e:
+        logger.error(f"Unexpected error in update_instrument_types_command: {e}", exc_info=True)
+        print(f"ERROR: Unexpected error: {e}")
+        return ERROR_EXIT_CODE
+
+
 def load_price_csv_command(file_path: str, ticker: str) -> int:
     """
     Handle load-price-csv command to import price data from CSV file.
@@ -1262,3 +1438,643 @@ def _get_indicator_reverse_mapping() -> Dict[str, tuple]:
         'inflation_index_monthly_us': ('fred', 'CPIAUCSL', 'US Consumer Price Index (CPI)'),
         'interest_rate_monthly_us': ('fred', 'DFF', 'US Federal Funds Rate'),
     }
+
+
+# =============================================================================
+# DATA ALIGNMENT COMMANDS
+# =============================================================================
+
+def align_data_command(
+    ticker: str,
+    economic_indicator: str,
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None,
+    alignment_method: str = "last_of_period",
+    output_format: str = "summary"
+) -> int:
+    """
+    Align price data with economic indicators for analysis.
+    
+    Args:
+        ticker: Instrument ticker symbol
+        economic_indicator: Economic indicator name
+        from_date: Start date (YYYY-MM-DD format, optional)
+        to_date: End date (YYYY-MM-DD format, optional)
+        alignment_method: Alignment method (last_of_period, first_of_period, forward_fill, nearest)
+        output_format: Output format (summary, detailed, csv)
+        
+    Returns:
+        Exit code (0 for success, 1 for error)
+    """
+    try:
+        # Validate inputs
+        validate_ticker(ticker)
+        
+        start_date = None
+        end_date = None
+        
+        if from_date:
+            start_date = validate_date_string(from_date, "from_date")
+        
+        if to_date:
+            end_date = validate_date_string(to_date, "to_date")
+        
+        if start_date and end_date and start_date > end_date:
+            raise ValidationError("Start date must be before end date")
+        
+        # Valid alignment methods
+        valid_methods = ["last_of_period", "first_of_period", "forward_fill", "nearest"]
+        if alignment_method not in valid_methods:
+            raise ValidationError(f"Invalid alignment method. Choose from: {', '.join(valid_methods)}")
+        
+        # Valid output formats
+        valid_formats = ["summary", "detailed", "csv"]
+        if output_format not in valid_formats:
+            raise ValidationError(f"Invalid output format. Choose from: {', '.join(valid_formats)}")
+        
+        print(f"📊 Aligning {ticker} price data with {economic_indicator}")
+        print(f"   Method: {alignment_method}")
+        if start_date:
+            print(f"   From: {start_date}")
+        if end_date:
+            print(f"   To: {end_date}")
+        print()
+        
+        # Initialize database manager
+        db = DatabaseManager()
+        
+        # Get aligned data
+        aligned_data = db.get_aligned_price_economic_data(
+            instrument_ticker=ticker,
+            economic_indicator_name=economic_indicator,
+            start_date=start_date,
+            end_date=end_date,
+            alignment_method=alignment_method
+        )
+        
+        if not aligned_data:
+            print(f"❌ No aligned data found for {ticker} and {economic_indicator}")
+            print(f"   Check that both instruments have data in the specified date range.")
+            return ERROR_EXIT_CODE
+        
+        # Display results based on output format
+        if output_format == "summary":
+            _display_alignment_summary(aligned_data, ticker, economic_indicator)
+        elif output_format == "detailed":
+            _display_alignment_detailed(aligned_data, ticker, economic_indicator)
+        elif output_format == "csv":
+            _export_alignment_csv(aligned_data, ticker, economic_indicator)
+        
+        return SUCCESS_EXIT_CODE
+        
+    except ValidationError as e:
+        print(f"ERROR: {e}")
+        return ERROR_EXIT_CODE
+    except Exception as e:
+        logger.error(f"Unexpected error in align_data_command: {e}", exc_info=True)
+        print(f"ERROR: Unexpected error: {e}")
+        return ERROR_EXIT_CODE
+
+
+def alignment_info_command() -> int:
+    """
+    Show information about available data alignment capabilities.
+    
+    Returns:
+        Exit code (0 for success, 1 for error)
+    """
+    try:
+        print("📊 Data Alignment System Information")
+        print("=" * 50)
+        
+        # Initialize database manager
+        db = DatabaseManager()
+        
+        # Get alignment summary
+        summary = db.get_alignment_data_summary()
+        
+        print(f"📈 Available Data:")
+        print(f"   Instruments with price data: {summary['instruments_with_price_data']}")
+        print(f"   Economic indicators with data: {summary['economic_indicators_with_data']}")
+        print(f"   Potential alignment pairs: {summary['potential_alignment_pairs']}")
+        print()
+        
+        print(f"📅 Date Ranges:")
+        price_range = summary['price_data_date_range']
+        economic_range = summary['economic_data_date_range']
+        
+        if price_range['start'] and price_range['end']:
+            print(f"   Price data: {price_range['start']} to {price_range['end']}")
+        
+        if economic_range['start'] and economic_range['end']:
+            print(f"   Economic data: {economic_range['start']} to {economic_range['end']}")
+        print()
+        
+        print("🔧 Available Alignment Methods:")
+        print("   • last_of_period  - Use last trading day of each month")
+        print("   • first_of_period - Use first trading day of each month")
+        print("   • forward_fill    - Fill daily prices with latest economic data")
+        print("   • nearest         - Use nearest economic data point")
+        print()
+        
+        print("💡 Example Commands:")
+        print("   market-data-etl align-data --ticker AAPL --economic-indicator inflation_monthly_us")
+        print("   market-data-etl align-data --ticker MSFT --economic-indicator unemployment_monthly_rate_us --from 2024-01-01 --method forward_fill")
+        print("   market-data-etl alignment-pairs  # Show all available combinations")
+        
+        return SUCCESS_EXIT_CODE
+        
+    except Exception as e:
+        logger.error(f"Unexpected error in alignment_info_command: {e}", exc_info=True)
+        print(f"ERROR: Unexpected error: {e}")
+        return ERROR_EXIT_CODE
+
+
+def alignment_pairs_command(limit: int = 20) -> int:
+    """
+    Show available instrument-economic indicator pairs for alignment.
+    
+    Args:
+        limit: Maximum number of pairs to show
+        
+    Returns:
+        Exit code (0 for success, 1 for error)
+    """
+    try:
+        print("📊 Available Data Alignment Pairs")
+        print("=" * 80)
+        
+        # Initialize database manager
+        db = DatabaseManager()
+        
+        # Get available pairs
+        pairs = db.get_available_alignment_pairs()
+        
+        if not pairs:
+            print("❌ No alignment pairs available")
+            print("   Make sure you have both price data and economic indicators in the database.")
+            return ERROR_EXIT_CODE
+        
+        print(f"Found {len(pairs)} total alignment pairs. Showing first {min(limit, len(pairs))}:")
+        print()
+        
+        # Display header
+        print(f"{'Ticker':<12} {'Instrument':<25} {'Type':<8} {'Economic Indicator':<25} {'Source':<8} {'Freq':<8}")
+        print("-" * 86)
+        
+        # Display pairs
+        for i, pair in enumerate(pairs[:limit]):
+            ticker = pair['instrument_ticker'][:11]
+            name = pair['instrument_name'][:24] if pair['instrument_name'] else 'N/A'
+            inst_type = pair['instrument_type'][:7]
+            indicator = pair['economic_indicator'][:24]
+            source = pair['indicator_source'][:7]
+            frequency = pair['indicator_frequency'][:7]
+            
+            print(f"{ticker:<12} {name:<25} {inst_type:<8} {indicator:<25} {source:<8} {frequency:<8}")
+        
+        if len(pairs) > limit:
+            print(f"\n... and {len(pairs) - limit} more pairs")
+            print(f"Use 'alignment-pairs --limit {len(pairs)}' to see all pairs")
+        
+        print(f"\n💡 Use 'align-data --ticker <TICKER> --economic-indicator <INDICATOR>' to align specific data")
+        
+        return SUCCESS_EXIT_CODE
+        
+    except Exception as e:
+        logger.error(f"Unexpected error in alignment_pairs_command: {e}", exc_info=True)
+        print(f"ERROR: Unexpected error: {e}")
+        return ERROR_EXIT_CODE
+
+
+# =============================================================================
+# ALIGNMENT HELPER FUNCTIONS
+# =============================================================================
+
+def _display_alignment_summary(data: List[Dict[str, Any]], ticker: str, indicator: str) -> None:
+    """Display summary of aligned data."""
+    print(f"✅ Successfully aligned {len(data)} data points")
+    print()
+    
+    if data:
+        first_point = data[0]
+        last_point = data[-1]
+        
+        print(f"📅 Date Range: {first_point['date']} to {last_point['date']}")
+        print(f"📊 Sample Data (first and last points):")
+        print()
+        
+        # Display first point
+        print(f"First Point ({first_point['date']}):")
+        if 'daily_close' in first_point:
+            print(f"   {ticker} Close: ${first_point['daily_close']:,.2f}")
+        if 'monthly_value' in first_point:
+            print(f"   {indicator}: {first_point['monthly_value']}")
+        print()
+        
+        # Display last point
+        print(f"Last Point ({last_point['date']}):")
+        if 'daily_close' in last_point:
+            print(f"   {ticker} Close: ${last_point['daily_close']:,.2f}")
+        if 'monthly_value' in last_point:
+            print(f"   {indicator}: {last_point['monthly_value']}")
+        print()
+        
+        print("💡 Use --output detailed to see all data points")
+        print("💡 Use --output csv to export to CSV format")
+
+
+def _display_alignment_detailed(data: List[Dict[str, Any]], ticker: str, indicator: str) -> None:
+    """Display detailed aligned data."""
+    print(f"✅ Aligned Data: {ticker} vs {indicator}")
+    print("=" * 80)
+    
+    # Display header
+    print(f"{'Date':<12} {'Close':<10} {'Volume':<12} {'Indicator':<15} {'Method':<15}")
+    print("-" * 64)
+    
+    # Display each data point
+    for point in data:
+        date_str = point['date']
+        close_price = f"${point.get('daily_close', 0):,.2f}" if point.get('daily_close') else "N/A"
+        volume = f"{point.get('daily_volume', 0):,}" if point.get('daily_volume') else "N/A"
+        indicator_value = f"{point.get('monthly_value', 0):.3f}" if point.get('monthly_value') else "N/A"
+        method = point.get('alignment_method', 'N/A')
+        
+        print(f"{date_str:<12} {close_price:<10} {volume:<12} {indicator_value:<15} {method:<15}")
+
+
+def _export_alignment_csv(data: List[Dict[str, Any]], ticker: str, indicator: str) -> None:
+    """Export aligned data to CSV format."""
+    import csv
+    import io
+    
+    # Generate filename
+    from datetime import datetime
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"aligned_data_{ticker}_{indicator}_{timestamp}.csv"
+    
+    # Write CSV
+    output = io.StringIO()
+    if data:
+        fieldnames = list(data[0].keys())
+        writer = csv.DictWriter(output, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(data)
+        
+        # Save to file
+        with open(filename, 'w', newline='') as f:
+            f.write(output.getvalue())
+        
+        print(f"✅ Exported {len(data)} aligned data points to: {filename}")
+    else:
+        print("❌ No data to export")
+
+
+# =============================================================================
+# ALIGNED DATA COMMANDS
+# =============================================================================
+
+def rebuild_aligned_data_command(
+    tickers: Optional[List[str]] = None,
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None,
+    clear_existing: bool = True
+) -> int:
+    """
+    Handle rebuild-aligned-data command.
+    
+    Args:
+        tickers: List of ticker symbols to rebuild (None for all)
+        from_date: Start date for rebuild (YYYY-MM-DD format)
+        to_date: End date for rebuild (YYYY-MM-DD format)
+        clear_existing: Whether to clear existing aligned data
+        
+    Returns:
+        Exit code (0 for success, 1 for error)
+    """
+    try:
+        print("🔄 Rebuilding aligned daily data...")
+        
+        # Validate and parse dates
+        start_date = None
+        end_date = None
+        
+        if from_date:
+            start_date = validate_date_string(from_date, "from_date")
+            print(f"   Start date: {start_date}")
+        
+        if to_date:
+            end_date = validate_date_string(to_date, "to_date")
+            print(f"   End date: {end_date}")
+        
+        if start_date and end_date:
+            validate_date_range(start_date, end_date)
+        
+        # Validate tickers if provided
+        validated_tickers = None
+        if tickers:
+            validated_tickers = []
+            for ticker in tickers:
+                validated_tickers.append(validate_ticker(ticker))
+            print(f"   Tickers: {', '.join(validated_tickers)}")
+        else:
+            print("   Tickers: All tickers with price data")
+        
+        print(f"   Clear existing: {'Yes' if clear_existing else 'No'}")
+        print()
+        
+        # Import and run ETL orchestrator
+        from ..etl.load import AlignedDataETLOrchestrator
+        
+        etl = AlignedDataETLOrchestrator()
+        results = etl.rebuild_aligned_data(
+            tickers=validated_tickers,
+            start_date=start_date,
+            end_date=end_date,
+            clear_existing=clear_existing
+        )
+        
+        # Display results
+        print("📊 Rebuild Results:")
+        print("=" * 50)
+        print(f"Tickers processed: {results['tickers_processed']}")
+        print(f"Total records created: {results['total_records_created']:,}")
+        print(f"Errors encountered: {len(results['errors'])}")
+        
+        # Display per-ticker statistics
+        if results['statistics']:
+            print("\n📈 Per-Ticker Results:")
+            for ticker, stats in results['statistics'].items():
+                if stats['records_created'] > 0:
+                    print(f"   ✅ {ticker}: {stats['records_created']:,} records ({stats['exchange']} calendar)")
+                else:
+                    print(f"   ⚠️  {ticker}: No records created")
+        
+        # Display errors if any
+        if results['errors']:
+            print("\n❌ Errors:")
+            for error in results['errors']:
+                print(f"   • {error}")
+        
+        if results['total_records_created'] > 0:
+            print(f"\n✅ Successfully rebuilt {results['total_records_created']:,} aligned daily records")
+            return SUCCESS_EXIT_CODE
+        else:
+            print("\n⚠️  No aligned records were created")
+            return ERROR_EXIT_CODE
+            
+    except ValidationError as e:
+        print(f"ERROR: {e}")
+        return ERROR_EXIT_CODE
+    except Exception as e:
+        print(f"ERROR: Failed to rebuild aligned data: {e}")
+        logger.error(f"rebuild_aligned_data_command failed: {e}", exc_info=True)
+        return ERROR_EXIT_CODE
+
+
+def query_aligned_data_command(
+    ticker: str,
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None,
+    indicators: Optional[List[str]] = None,
+    output_format: str = 'summary'
+) -> int:
+    """
+    Handle query-aligned-data command.
+    
+    Args:
+        ticker: Ticker symbol to query
+        from_date: Start date filter (YYYY-MM-DD format)
+        to_date: End date filter (YYYY-MM-DD format)
+        indicators: List of specific indicators to include
+        output_format: Output format ('summary', 'detailed', 'csv')
+        
+    Returns:
+        Exit code (0 for success, 1 for error)
+    """
+    try:
+        # Validate inputs
+        ticker = validate_ticker(ticker)
+        
+        start_date = None
+        end_date = None
+        
+        if from_date:
+            start_date = validate_date_string(from_date, "from_date")
+        
+        if to_date:
+            end_date = validate_date_string(to_date, "to_date")
+        
+        if start_date and end_date:
+            validate_date_range(start_date, end_date)
+        
+        print(f"📊 Querying aligned data for {ticker}")
+        if start_date or end_date:
+            print(f"   Date range: {start_date or 'earliest'} to {end_date or 'latest'}")
+        if indicators:
+            print(f"   Indicators: {', '.join(indicators)}")
+        print()
+        
+        # Query aligned data
+        db = DatabaseManager()
+        aligned_df = db.get_aligned_daily_data(
+            ticker=ticker,
+            start_date=start_date,
+            end_date=end_date,
+            indicators=indicators
+        )
+        
+        if aligned_df.empty:
+            print(f"❌ No aligned data found for {ticker}")
+            print("💡 Try rebuilding aligned data first: rebuild-aligned-data --ticker", ticker)
+            return ERROR_EXIT_CODE
+        
+        # Display results based on format
+        if output_format == 'csv':
+            _export_aligned_data_csv(aligned_df, ticker)
+        elif output_format == 'detailed':
+            _display_aligned_data_detailed(aligned_df, ticker)
+        else:  # summary
+            _display_aligned_data_summary(aligned_df, ticker)
+        
+        return SUCCESS_EXIT_CODE
+        
+    except ValidationError as e:
+        print(f"ERROR: {e}")
+        return ERROR_EXIT_CODE
+    except Exception as e:
+        print(f"ERROR: Failed to query aligned data: {e}")
+        logger.error(f"query_aligned_data_command failed: {e}", exc_info=True)
+        return ERROR_EXIT_CODE
+
+
+def aligned_data_info_command() -> int:
+    """
+    Handle aligned-data-info command.
+    
+    Returns:
+        Exit code (0 for success, 1 for error)
+    """
+    try:
+        print("📊 Aligned Data System Information")
+        print("=" * 50)
+        
+        db = DatabaseManager()
+        
+        # Get coverage statistics
+        coverage = db.get_aligned_data_coverage()
+        
+        if coverage['total_records'] == 0:
+            print("❌ No aligned data found in database")
+            print("💡 Run 'rebuild-aligned-data' to create aligned data")
+            return SUCCESS_EXIT_CODE
+        
+        # Display basic statistics
+        print(f"📈 Total Records: {coverage['total_records']:,}")
+        print(f"📅 Date Range: {coverage['date_range']['start']} to {coverage['date_range']['end']}")
+        print()
+        
+        # Display field coverage
+        print("🔧 Field Coverage:")
+        field_coverage = coverage.get('field_coverage', {})
+        
+        # Group by category
+        price_fields = [f for f in field_coverage.keys() if 'price' in f or f == 'volume']
+        economic_fields = [f for f in field_coverage.keys() if f not in price_fields]
+        
+        if price_fields:
+            print("   Price Data:")
+            for field in sorted(price_fields):
+                stats = field_coverage[field]
+                print(f"      {field}: {stats['coverage_percentage']:.1f}% ({stats['records_with_data']:,} records)")
+        
+        if economic_fields:
+            print("   Economic Indicators:")
+            for field in sorted(economic_fields):
+                stats = field_coverage[field]
+                print(f"      {field}: {stats['coverage_percentage']:.1f}% ({stats['records_with_data']:,} records)")
+        
+        print()
+        print("💡 Example Commands:")
+        print("   query-aligned-data --ticker AAPL --from 2024-01-01")
+        print("   query-aligned-data --ticker ESSITY-B.ST --indicators inflation_monthly_euro")
+        print("   rebuild-aligned-data --ticker AAPL --from 2024-01-01")
+        
+        return SUCCESS_EXIT_CODE
+        
+    except Exception as e:
+        print(f"ERROR: Failed to get aligned data info: {e}")
+        logger.error(f"aligned_data_info_command failed: {e}", exc_info=True)
+        return ERROR_EXIT_CODE
+
+
+# =============================================================================
+# ALIGNED DATA DISPLAY FUNCTIONS  
+# =============================================================================
+
+def _display_aligned_data_summary(aligned_df, ticker: str) -> None:
+    """Display summary of aligned data."""
+    print(f"✅ Aligned Data Summary: {ticker}")
+    print("=" * 50)
+    
+    # Basic statistics
+    total_records = len(aligned_df)
+    min_date = aligned_df.index.min()
+    max_date = aligned_df.index.max()
+    
+    # Handle different date formats
+    if hasattr(min_date, 'date'):
+        date_range = f"{min_date.date()} to {max_date.date()}"
+    else:
+        date_range = f"{min_date} to {max_date}"
+    
+    print(f"📊 Records: {total_records:,}")
+    print(f"📅 Date Range: {date_range}")
+    
+    # Trading calendar info
+    if 'trading_calendar' in aligned_df.columns:
+        calendars = aligned_df['trading_calendar'].unique()
+        print(f"📈 Trading Calendar: {', '.join(calendars)}")
+    
+    print()
+    
+    # Price data coverage
+    price_cols = ['open', 'high', 'low', 'close', 'volume']
+    price_coverage = []
+    for col in price_cols:
+        if col in aligned_df.columns:
+            non_null_count = aligned_df[col].count()
+            coverage_pct = (non_null_count / total_records) * 100
+            price_coverage.append(f"{col}: {coverage_pct:.1f}%")
+    
+    if price_coverage:
+        print("📈 Price Data Coverage:")
+        for coverage in price_coverage:
+            print(f"   {coverage}")
+        print()
+    
+    # Economic indicators coverage
+    economic_cols = [col for col in aligned_df.columns 
+                    if col not in price_cols + ['trading_calendar'] 
+                    and not col.endswith('_price')]
+    
+    if economic_cols:
+        print("🌍 Economic Indicators Coverage:")
+        for col in sorted(economic_cols):
+            non_null_count = aligned_df[col].count()
+            coverage_pct = (non_null_count / total_records) * 100
+            print(f"   {col}: {coverage_pct:.1f}% ({non_null_count:,} records)")
+        print()
+    
+    # Sample data
+    if total_records > 0:
+        print("📄 Sample Data (first 3 rows):")
+        sample_df = aligned_df.head(3)
+        
+        # Display key columns only
+        display_cols = ['close', 'volume'] + [col for col in economic_cols[:3]]
+        display_cols = [col for col in display_cols if col in aligned_df.columns]
+        
+        if display_cols:
+            print(sample_df[display_cols].to_string())
+        print()
+    
+    print("💡 Use --output detailed to see all data")
+    print("💡 Use --output csv to export data")
+
+
+def _display_aligned_data_detailed(aligned_df, ticker: str) -> None:
+    """Display detailed aligned data."""
+    print(f"✅ Detailed Aligned Data: {ticker}")
+    print("=" * 80)
+    
+    # Display all data with formatting
+    pd_options = {
+        'display.max_rows': 50,
+        'display.max_columns': 10,
+        'display.width': 120,
+        'display.precision': 2
+    }
+    
+    with pd.option_context(*[item for pair in pd_options.items() for item in pair]):
+        print(aligned_df.to_string())
+    
+    if len(aligned_df) > 50:
+        print(f"\n... showing first 50 of {len(aligned_df)} records")
+        print("💡 Use --output csv to export all data")
+
+
+def _export_aligned_data_csv(aligned_df, ticker: str) -> None:
+    """Export aligned data to CSV."""
+    from datetime import datetime
+    
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"aligned_data_{ticker}_{timestamp}.csv"
+    
+    # Export with date as column
+    export_df = aligned_df.reset_index()
+    export_df.to_csv(filename, index=False)
+    
+    print(f"✅ Exported {len(aligned_df)} aligned records to: {filename}")
+    print(f"📁 File location: {os.path.abspath(filename)}")

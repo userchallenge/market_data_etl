@@ -24,6 +24,11 @@ class InstrumentType(enum.Enum):
     STOCK = "stock"
     FUND = "fund" 
     ETF = "etf"
+    INDEX = "index"
+    COMMODITY = "commodity"
+    CURRENCY = "currency"
+    CRYPTOCURRENCY = "cryptocurrency"
+    UNKNOWN = "unknown"
 
 
 class TransactionType(enum.Enum):
@@ -36,19 +41,20 @@ class TransactionType(enum.Enum):
     MERGER = "merger"
 
 
-class Company(Base):
+class Instrument(Base):
     """
-    Company/Instrument information with currency and basic details.
+    Financial instrument information with currency and basic details.
     
-    Stores essential information for stocks, funds, and ETFs needed for 
-    financial analysis including the base currency for all financial statements.
+    Stores essential information for stocks, funds, ETFs, indices, commodities,
+    and other financial instruments needed for analysis including the base currency
+    for all financial statements.
     """
-    __tablename__ = 'companies'
+    __tablename__ = 'instruments'
     
     id = Column(Integer, primary_key=True)
     ticker_symbol = Column(String(20), unique=True, nullable=False, index=True)
     isin = Column(String(12), unique=True, nullable=True, index=True)  # International Securities Identification Number
-    company_name = Column(String(200))
+    instrument_name = Column(String(200))
     instrument_type = Column(Enum(InstrumentType), nullable=False, default=InstrumentType.STOCK)
     sector = Column(String(100))
     industry = Column(String(100))
@@ -58,17 +64,28 @@ class Company(Base):
     employees = Column(Integer)
     founded_year = Column(Integer)
     fund_type = Column(String(50))  # For funds/ETFs: equity, bond, mixed, etc.
+    
+    # Index-specific fields
+    index_methodology = Column(String(200))  # "Market cap weighted", "Price weighted", etc.
+    constituent_count = Column(Integer)      # Number of stocks in index
+    base_date = Column(Date)                 # When index started
+    base_value = Column(Float)               # Starting value (e.g., 100)
+    
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     # Relationships
-    prices = relationship("Price", back_populates="company")
-    income_statements = relationship("IncomeStatement", back_populates="company")
-    balance_sheets = relationship("BalanceSheet", back_populates="company")
-    cash_flows = relationship("CashFlow", back_populates="company")
-    financial_ratios = relationship("FinancialRatio", back_populates="company")
-    portfolio_holdings = relationship("PortfolioHolding", back_populates="company")
-    transactions = relationship("Transaction", back_populates="company")
+    prices = relationship("Price", back_populates="instrument")
+    income_statements = relationship("IncomeStatement", back_populates="instrument")
+    balance_sheets = relationship("BalanceSheet", back_populates="instrument")
+    cash_flows = relationship("CashFlow", back_populates="instrument")
+    financial_ratios = relationship("FinancialRatio", back_populates="instrument")
+    portfolio_holdings = relationship("PortfolioHolding", back_populates="instrument")
+    transactions = relationship("Transaction", back_populates="instrument")
+
+
+# Backward compatibility alias
+Company = Instrument
 
 
 class Price(Base):
@@ -76,12 +93,12 @@ class Price(Base):
     Daily OHLC price data with volume.
     
     Contains Open, High, Low, Close, Adjusted Close, and Volume data
-    for each trading day. Linked to companies rather than tickers.
+    for each trading day. Linked to instruments rather than tickers.
     """
     __tablename__ = 'prices'
     
     id = Column(Integer, primary_key=True)
-    company_id = Column(Integer, ForeignKey('companies.id'), nullable=False)
+    instrument_id = Column(Integer, ForeignKey('instruments.id'), nullable=False)
     date = Column(Date, nullable=False, index=True)
     open = Column(Float)
     high = Column(Float)
@@ -92,11 +109,11 @@ class Price(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     
     # Relationships
-    company = relationship("Company", back_populates="prices")
+    instrument = relationship("Instrument", back_populates="prices")
     
     # Indexes for efficient querying
     __table_args__ = (
-        Index('ix_prices_company_date', 'company_id', 'date'),
+        Index('ix_prices_instrument_date', 'instrument_id', 'date'),
         {'sqlite_autoincrement': True}
     )
 
@@ -111,7 +128,7 @@ class IncomeStatement(Base):
     __tablename__ = 'income_statements'
     
     id = Column(Integer, primary_key=True)
-    company_id = Column(Integer, ForeignKey('companies.id'), nullable=False)
+    instrument_id = Column(Integer, ForeignKey('instruments.id'), nullable=False)
     period_end_date = Column(Date, nullable=False)
     period_type = Column(String(20), nullable=False)  # 'annual', 'quarterly'
     fiscal_year = Column(Integer, nullable=False)
@@ -156,12 +173,12 @@ class IncomeStatement(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     
     # Relationships
-    company = relationship("Company", back_populates="income_statements")
+    instrument = relationship("Instrument", back_populates="income_statements")
     
     # Indexes for efficient querying
     __table_args__ = (
-        Index('ix_income_company_period', 'company_id', 'period_end_date', 'period_type'),
-        Index('ix_income_fiscal', 'company_id', 'fiscal_year', 'fiscal_quarter'),
+        Index('ix_income_instrument_period', 'instrument_id', 'period_end_date', 'period_type'),
+        Index('ix_income_fiscal', 'instrument_id', 'fiscal_year', 'fiscal_quarter'),
         {'sqlite_autoincrement': True}
     )
 
@@ -176,7 +193,7 @@ class BalanceSheet(Base):
     __tablename__ = 'balance_sheets'
     
     id = Column(Integer, primary_key=True)
-    company_id = Column(Integer, ForeignKey('companies.id'), nullable=False)
+    instrument_id = Column(Integer, ForeignKey('instruments.id'), nullable=False)
     period_end_date = Column(Date, nullable=False)
     period_type = Column(String(20), nullable=False)  # 'annual', 'quarterly'
     fiscal_year = Column(Integer, nullable=False)
@@ -237,12 +254,12 @@ class BalanceSheet(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     
     # Relationships
-    company = relationship("Company", back_populates="balance_sheets")
+    instrument = relationship("Instrument", back_populates="balance_sheets")
     
     # Indexes
     __table_args__ = (
-        Index('ix_balance_company_period', 'company_id', 'period_end_date', 'period_type'),
-        Index('ix_balance_fiscal', 'company_id', 'fiscal_year', 'fiscal_quarter'),
+        Index('ix_balance_instrument_period', 'instrument_id', 'period_end_date', 'period_type'),
+        Index('ix_balance_fiscal', 'instrument_id', 'fiscal_year', 'fiscal_quarter'),
         {'sqlite_autoincrement': True}
     )
 
@@ -257,7 +274,7 @@ class CashFlow(Base):
     __tablename__ = 'cash_flows'
     
     id = Column(Integer, primary_key=True)
-    company_id = Column(Integer, ForeignKey('companies.id'), nullable=False)
+    instrument_id = Column(Integer, ForeignKey('instruments.id'), nullable=False)
     period_end_date = Column(Date, nullable=False)
     period_type = Column(String(20), nullable=False)  # 'annual', 'quarterly'
     fiscal_year = Column(Integer, nullable=False)
@@ -307,12 +324,12 @@ class CashFlow(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     
     # Relationships
-    company = relationship("Company", back_populates="cash_flows")
+    instrument = relationship("Instrument", back_populates="cash_flows")
     
     # Indexes
     __table_args__ = (
-        Index('ix_cashflow_company_period', 'company_id', 'period_end_date', 'period_type'),
-        Index('ix_cashflow_fiscal', 'company_id', 'fiscal_year', 'fiscal_quarter'),
+        Index('ix_cashflow_instrument_period', 'instrument_id', 'period_end_date', 'period_type'),
+        Index('ix_cashflow_fiscal', 'instrument_id', 'fiscal_year', 'fiscal_quarter'),
         {'sqlite_autoincrement': True}
     )
 
@@ -327,7 +344,7 @@ class FinancialRatio(Base):
     __tablename__ = 'financial_ratios'
     
     id = Column(Integer, primary_key=True)
-    company_id = Column(Integer, ForeignKey('companies.id'), nullable=False)
+    instrument_id = Column(Integer, ForeignKey('instruments.id'), nullable=False)
     period_end_date = Column(Date, nullable=False)
     period_type = Column(String(20), nullable=False)
     fiscal_year = Column(Integer, nullable=False)
@@ -374,11 +391,11 @@ class FinancialRatio(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     
     # Relationships
-    company = relationship("Company", back_populates="financial_ratios")
+    instrument = relationship("Instrument", back_populates="financial_ratios")
     
     # Indexes
     __table_args__ = (
-        Index('ix_ratios_company_period', 'company_id', 'period_end_date', 'period_type'),
+        Index('ix_ratios_instrument_period', 'instrument_id', 'period_end_date', 'period_type'),
         {'sqlite_autoincrement': True}
     )
 
@@ -416,7 +433,7 @@ class PortfolioHolding(Base):
     
     id = Column(Integer, primary_key=True)
     portfolio_id = Column(Integer, ForeignKey('portfolios.id'), nullable=False)
-    company_id = Column(Integer, ForeignKey('companies.id'), nullable=False)
+    instrument_id = Column(Integer, ForeignKey('instruments.id'), nullable=False)
     sector = Column(String(100))  # Can override company sector for portfolio-specific categorization
     fund_type = Column(String(50))  # For funds: equity, bond, mixed, etc.
     notes = Column(Text)
@@ -424,11 +441,11 @@ class PortfolioHolding(Base):
     
     # Relationships
     portfolio = relationship("Portfolio", back_populates="holdings")
-    company = relationship("Company", back_populates="portfolio_holdings")
+    instrument = relationship("Instrument", back_populates="portfolio_holdings")
     
     # Indexes
     __table_args__ = (
-        Index('ix_holdings_portfolio_company', 'portfolio_id', 'company_id', unique=True),
+        Index('ix_holdings_portfolio_company', 'portfolio_id', 'instrument_id', unique=True),
         {'sqlite_autoincrement': True}
     )
 
@@ -444,7 +461,7 @@ class Transaction(Base):
     
     id = Column(Integer, primary_key=True)
     portfolio_id = Column(Integer, ForeignKey('portfolios.id'), nullable=True)  # Can be NULL for unassigned transactions
-    company_id = Column(Integer, ForeignKey('companies.id'), nullable=False)
+    instrument_id = Column(Integer, ForeignKey('instruments.id'), nullable=False)
     transaction_date = Column(Date, nullable=False, index=True)
     transaction_type = Column(Enum(TransactionType), nullable=False, index=True)
     
@@ -465,12 +482,12 @@ class Transaction(Base):
     
     # Relationships
     portfolio = relationship("Portfolio", back_populates="transactions")
-    company = relationship("Company", back_populates="transactions")
+    instrument = relationship("Instrument", back_populates="transactions")
     
     # Indexes
     __table_args__ = (
         Index('ix_transactions_portfolio_date', 'portfolio_id', 'transaction_date'),
-        Index('ix_transactions_company_date', 'company_id', 'transaction_date'),
+        Index('ix_transactions_instrument_date', 'instrument_id', 'transaction_date'),
         Index('ix_transactions_type_date', 'transaction_type', 'transaction_date'),
         {'sqlite_autoincrement': True}
     )
@@ -565,5 +582,60 @@ class Threshold(Base):
     # Indexes
     __table_args__ = (
         Index('ix_thresholds_indicator_category', 'indicator_id', 'category'),
+        {'sqlite_autoincrement': True}
+    )
+
+
+class AlignedDailyData(Base):
+    """
+    Trading-day aligned data combining price and economic indicators.
+    
+    This table stores daily data aligned to trading calendars, with price data
+    from trading days and forward-filled economic indicators. Provides a unified
+    view for analysis across different data frequencies.
+    
+    Design principle: Each row represents one trading day for one instrument,
+    with the most recent economic indicator values forward-filled.
+    """
+    __tablename__ = 'aligned_daily_data'
+    
+    # Composite primary key: trading date + instrument
+    date = Column(Date, primary_key=True, nullable=False)
+    instrument_id = Column(Integer, ForeignKey('instruments.id'), primary_key=True, nullable=False)
+    
+    # Price data (from actual trading day)
+    open_price = Column(Float(precision=4))
+    high_price = Column(Float(precision=4))
+    low_price = Column(Float(precision=4))
+    close_price = Column(Float(precision=4))
+    adjusted_close = Column(Float(precision=4))
+    volume = Column(Integer)
+    
+    # US Economic indicators (forward-filled from release dates)
+    inflation_monthly_us = Column(Float(precision=4))           # Monthly inflation rate %
+    inflation_index_monthly_us = Column(Float(precision=4))     # CPI index value
+    unemployment_monthly_rate_us = Column(Float(precision=4))   # Unemployment rate %
+    interest_rate_monthly_us = Column(Float(precision=4))       # Fed funds rate %
+    
+    # European Economic indicators (forward-filled from release dates)
+    inflation_monthly_euro = Column(Float(precision=4))         # HICP monthly rate %
+    unemployment_rate_monthly_euro = Column(Float(precision=4)) # Euro unemployment %
+    interest_rate_change_day_euro = Column(Float(precision=4))  # ECB main rate %
+    interest_rate_monthly_euro = Column(Float(precision=4))     # ECB monthly rate %
+    
+    # Metadata
+    trading_calendar = Column(String(10), nullable=False)  # Exchange calendar used (US, STO, LSE, etc.)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Relationships
+    instrument = relationship("Instrument")
+    
+    # Indexes for performance
+    __table_args__ = (
+        Index('ix_aligned_date', 'date'),
+        Index('ix_aligned_instrument_date', 'instrument_id', 'date'),
+        Index('ix_aligned_calendar', 'trading_calendar'),
+        Index('ix_aligned_date_calendar', 'date', 'trading_calendar'),
         {'sqlite_autoincrement': True}
     )
