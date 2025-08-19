@@ -6,7 +6,7 @@ like Yahoo Finance. No transformation or loading logic should be here.
 """
 
 from typing import Dict, Any, Optional
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 import yfinance as yf
 import pandas as pd
 
@@ -60,7 +60,7 @@ class FinancialDataExtractor(DataFetcher):
                 
                 raw_data = {
                     'ticker': ticker,
-                    'extraction_timestamp': datetime.utcnow().isoformat(),
+                    'extraction_timestamp': datetime.now(timezone.utc).isoformat(),
                     'data_sources': {}
                 }
                 
@@ -81,7 +81,7 @@ class FinancialDataExtractor(DataFetcher):
                                 'source_attribute': yf_attribute,
                                 'data_type': type(raw_source_data).__name__,
                                 'raw_data': raw_source_data,
-                                'extracted_at': datetime.utcnow().isoformat()
+                                'extracted_at': datetime.now(timezone.utc).isoformat()
                             }
                             extraction_summary.append(data_type)
                         else:
@@ -192,7 +192,7 @@ class PriceDataExtractor(DataFetcher):
                     'ticker': ticker,
                     'start_date': start_date.isoformat(),
                     'end_date': end_date.isoformat(),
-                    'extraction_timestamp': datetime.utcnow().isoformat(),
+                    'extraction_timestamp': datetime.now(timezone.utc).isoformat(),
                     'raw_data': raw_price_data,
                     'data_type': type(raw_price_data).__name__,
                     'shape': raw_price_data.shape,

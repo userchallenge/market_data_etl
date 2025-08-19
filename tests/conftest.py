@@ -46,6 +46,15 @@ def pytest_configure(config):
 def temp_db_engine():
     """Create temporary database engine for testing session."""
     engine = create_engine('sqlite:///:memory:', echo=False)
+    
+    # Enable foreign key constraints for test database
+    from sqlalchemy import event
+    @event.listens_for(engine, "connect")
+    def enable_foreign_keys(dbapi_connection, connection_record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+    
     Base.metadata.create_all(engine)
     yield engine
     engine.dispose()

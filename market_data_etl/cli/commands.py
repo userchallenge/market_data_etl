@@ -214,8 +214,8 @@ def db_info_command(ticker: str) -> int:
         # Initialize database
         db = DatabaseManager()
         
-        # Get ticker info
-        info = db.get_ticker_info(ticker)
+        # Get instrument info
+        info = db.get_instrument_info(ticker)
         
         print(f"Database information for {ticker}:")
         print("-" * 40)
@@ -296,10 +296,10 @@ def fetch_financial_statements_command(
         
         # Check if this instrument type should have fundamentals fetched
         db = DatabaseManager()
-        ticker_info = db.get_ticker_info(ticker)
+        instrument_info = db.get_instrument_info(ticker)
         
-        if ticker_info and ticker_info.get('instrument_type'):
-            instrument_type = InstrumentType(ticker_info['instrument_type'])
+        if instrument_info and instrument_info.get('instrument_type'):
+            instrument_type = InstrumentType(instrument_info['instrument_type'])
             if not should_fetch_fundamentals(instrument_type):
                 print(f"⚠️  Skipping fundamental data for {ticker} (instrument type: {instrument_type.value})")
                 print("Fundamental data is only available for stocks.")

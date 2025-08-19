@@ -167,7 +167,7 @@ def store_new_data(self, new_data: Dict[str, Any]) -> Dict[str, int]:
     pass
 
 def get_new_data_info(self, identifier: str) -> Dict[str, Any]:
-    """Follow exact same pattern as get_ticker_info."""
+    """Follow exact same pattern as get_instrument_info."""
     pass
 ```
 

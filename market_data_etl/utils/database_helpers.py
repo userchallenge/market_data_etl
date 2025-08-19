@@ -9,6 +9,7 @@ from typing import Any, Callable, Dict, List, Optional, Type, TypeVar
 from contextlib import contextmanager
 from sqlalchemy.orm import Session
 from functools import wraps
+from datetime import datetime, timezone
 
 from ..utils.logging import get_logger
 from .error_handlers import handle_database_errors
@@ -155,7 +156,7 @@ def update_record_timestamp(record: Any, field_name: str = 'updated_at'):
     Update a record's timestamp field consistently.
     
     This consolidates the repeated pattern of:
-    record.updated_at = datetime.utcnow()
+    record.updated_at = datetime.now(timezone.utc)
     
     Args:
         record: Database record to update
@@ -163,11 +164,10 @@ def update_record_timestamp(record: Any, field_name: str = 'updated_at'):
         
     Usage:
         update_record_timestamp(instrument)
-        # Sets instrument.updated_at = datetime.utcnow()
+        # Sets instrument.updated_at = datetime.now(timezone.utc)
     """
-    from datetime import datetime
     if hasattr(record, field_name):
-        setattr(record, field_name, datetime.utcnow())
+        setattr(record, field_name, datetime.now(timezone.utc))
 
 
 def create_or_update_record(
@@ -195,8 +195,8 @@ def create_or_update_record(
             session=session,
             model_class=Instrument,
             filter_conditions={'ticker': 'AAPL'},
-            update_data={'name': 'Apple Inc.', 'updated_at': datetime.utcnow()},
-            create_data={'ticker': 'AAPL', 'name': 'Apple Inc.', 'created_at': datetime.utcnow()}
+            update_data={'name': 'Apple Inc.', 'updated_at': datetime.now(timezone.utc)},
+            create_data={'ticker': 'AAPL', 'name': 'Apple Inc.', 'created_at': datetime.now(timezone.utc)}
         )
     """
     # Try to find existing record
@@ -326,8 +326,7 @@ class BulkOperationTracker:
     
     def start(self):
         """Start tracking the bulk operation."""
-        from datetime import datetime
-        self.start_time = datetime.utcnow()
+            self.start_time = datetime.now(timezone.utc)
         logger.info(f"Starting bulk operation: {self.operation_name}")
     
     def record_created(self, count: int = 1):
@@ -347,8 +346,7 @@ class BulkOperationTracker:
     
     def finish(self) -> Dict[str, Any]:
         """Finish tracking and return summary."""
-        from datetime import datetime
-        end_time = datetime.utcnow()
+            end_time = datetime.now(timezone.utc)
         duration = end_time - self.start_time if self.start_time else None
         
         summary = {

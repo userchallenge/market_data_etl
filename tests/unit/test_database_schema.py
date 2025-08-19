@@ -166,6 +166,15 @@ class TestDataIntegrityConstraints:
     def test_session(self):
         """Create in-memory database for testing."""
         engine = create_engine('sqlite:///:memory:')
+        
+        # Enable foreign key constraints for test database
+        from sqlalchemy import event
+        @event.listens_for(engine, "connect")
+        def enable_foreign_keys(dbapi_connection, connection_record):
+            cursor = dbapi_connection.cursor()
+            cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.close()
+        
         Base.metadata.create_all(engine)
         Session = sessionmaker(bind=engine)
         session = Session()
@@ -418,7 +427,7 @@ class TestDatabaseManagerIntegration:
     def test_instrument_storage_and_retrieval(self, temp_db_manager):
         """Test instrument storage and retrieval through DatabaseManager."""
         # This tests the current store_price_data functionality
-        test_ticker = 'TEST_STORAGE'
+        test_ticker = 'TESTSTORAGE'
         
         # Create sample price DataFrame
         price_data = pd.DataFrame({
@@ -429,7 +438,7 @@ class TestDatabaseManagerIntegration:
             'close': [102.0, 103.0],
             'adj_close': [102.0, 103.0],
             'volume': [1000000, 1100000]
-        }).set_index('date')
+        })
         
         # Store data
         count = temp_db_manager.store_price_data(test_ticker, price_data)
@@ -438,7 +447,8 @@ class TestDatabaseManagerIntegration:
         # Retrieve instrument info
         instrument_info = temp_db_manager.get_instrument_info(test_ticker)
         assert instrument_info is not None
-        assert instrument_info['ticker_symbol'] == test_ticker
+        assert instrument_info['exists'] == True
+        assert instrument_info['ticker'] == test_ticker
     
     def test_economic_data_storage(self, temp_db_manager):
         """Test economic data storage functionality."""
@@ -476,6 +486,65 @@ class TestDatabaseManagerIntegration:
         assert portfolio_id is not None
         
         # Should be able to retrieve portfolio info
-        portfolio_info = temp_db_manager.get_portfolio_info('Test Portfolio')
-        assert portfolio_info is not None
-        assert portfolio_info['name'] == 'Test Portfolio'
+        portfolio_summary = temp_db_manager.get_portfolio_summary('Test Portfolio')
+        assert portfolio_summary is not None
+        assert portfolio_summary['exists'] == True
+        assert portfolio_summary['portfolio']['name'] == 'Test Portfolio'
+    
+    def test_clear_all_data_with_foreign_keys(self, temp_db_manager):
+        """Test that clear_all_data works with foreign key constraints."""
+        # First, create some test data with relationships
+        test_ticker = 'CLEARTEST'
+        
+        # Create instrument and price data
+        price_data = pd.DataFrame({
+            'date': [date(2024, 1, 1), date(2024, 1, 2)],
+            'open': [100.0, 101.0],
+            'high': [105.0, 106.0],
+            'low': [95.0, 96.0],
+            'close': [102.0, 103.0],
+            'adj_close': [102.0, 103.0],
+            'volume': [1000000, 1100000]
+        })
+        temp_db_manager.store_price_data(test_ticker, price_data)
+        
+        # Create economic indicator data
+        indicator_data = {
+            'name': 'test_clear_indicator',
+            'source': 'test_source',
+            'source_identifier': 'CLEAR_TEST_ID',
+            'description': 'Test indicator for clear test',
+            'unit': 'percent',
+            'frequency': 'monthly',
+            'data_points': [
+                {'date': '2024-01-01', 'value': 2.5},
+                {'date': '2024-02-01', 'value': 2.7}
+            ]
+        }
+        temp_db_manager.store_economic_data(indicator_data)
+        
+        # Create portfolio data
+        portfolio_config = {
+            'name': 'Clear Test Portfolio',
+            'description': 'Portfolio for clear test',
+            'holdings': [test_ticker]
+        }
+        temp_db_manager.load_portfolio_from_config(portfolio_config)
+        
+        # Verify data exists before clearing
+        instrument_info = temp_db_manager.get_instrument_info(test_ticker)
+        assert instrument_info['exists'] == True
+        
+        portfolio_summary = temp_db_manager.get_portfolio_summary('Clear Test Portfolio')
+        assert portfolio_summary['exists'] == True
+        
+        # Test clear_all_data - should work without FK constraint errors
+        success = temp_db_manager.clear_all_data()
+        assert success == True
+        
+        # Verify all data is cleared
+        instrument_info_after = temp_db_manager.get_instrument_info(test_ticker)
+        assert instrument_info_after['exists'] == False
+        
+        portfolio_summary_after = temp_db_manager.get_portfolio_summary('Clear Test Portfolio')
+        assert portfolio_summary_after['exists'] == False

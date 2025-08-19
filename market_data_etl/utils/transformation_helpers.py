@@ -5,7 +5,7 @@ This module provides common transformation patterns used throughout
 the ETL pipeline, reducing code duplication and improving consistency.
 """
 
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from typing import Dict, Any, Optional, Union, List
 import logging
 
@@ -28,7 +28,7 @@ def create_timestamp() -> str:
         timestamp = create_timestamp()
         # Returns: "2024-08-19T15:30:45.123456"
     """
-    return datetime.utcnow().isoformat()
+    return datetime.now(timezone.utc).isoformat()
 
 
 def create_extraction_metadata(
@@ -343,12 +343,12 @@ class DataTransformationContext:
         self.errors = []
     
     def __enter__(self):
-        self.start_time = datetime.utcnow()
+        self.start_time = datetime.now(timezone.utc)
         logger.info(f"{self.transformer_name}: Starting {self.operation}")
         return self
     
     def __exit__(self, exc_type, exc_val, exc_tb):
-        duration = datetime.utcnow() - self.start_time
+        duration = datetime.now(timezone.utc) - self.start_time
         
         if exc_type is None:
             logger.info(f"{self.transformer_name}: Completed {self.operation} - {self.records_processed} records in {duration.total_seconds():.2f}s")

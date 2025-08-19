@@ -7,7 +7,7 @@ from Yahoo Finance with robust error handling and exponential backoff.
 
 import time
 from typing import Optional, Dict, Any
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 import yfinance as yf
 import pandas as pd
 import requests
@@ -568,7 +568,7 @@ class EconomicDataFetcher(DataFetcher):
                     'from_year_month': from_year_month,
                     'to_year_month': to_year_month,
                     'url': url,
-                    'extraction_timestamp': datetime.utcnow().isoformat(),
+                    'extraction_timestamp': datetime.now(timezone.utc).isoformat(),
                     'raw_data': json_data
                 }
                 
@@ -629,7 +629,7 @@ class EconomicDataFetcher(DataFetcher):
                     'from_year_month': from_year_month,
                     'to_year_month': to_year_month,
                     'url': url,
-                    'extraction_timestamp': datetime.utcnow().isoformat(),
+                    'extraction_timestamp': datetime.now(timezone.utc).isoformat(),
                     'raw_data': json_data
                 }
                 
@@ -680,7 +680,7 @@ class EconomicDataFetcher(DataFetcher):
                     'from_date': from_date,
                     'to_date': to_date,
                     'url': url,
-                    'extraction_timestamp': datetime.utcnow().isoformat(),
+                    'extraction_timestamp': datetime.now(timezone.utc).isoformat(),
                     'raw_data': json_data
                 }
                 

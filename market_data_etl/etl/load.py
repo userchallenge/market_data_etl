@@ -6,7 +6,7 @@ No extraction or transformation logic should be here.
 """
 
 from typing import Dict, Any, Optional, List
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 import pandas as pd
 
 from ..utils.logging import get_logger
@@ -43,7 +43,7 @@ class FinancialDataLoader:
         
         loading_results = {
             'ticker': ticker,
-            'loading_timestamp': datetime.utcnow().isoformat(),
+            'loading_timestamp': datetime.now(timezone.utc).isoformat(),
             'loaded_records': {},
             'errors': []
         }
@@ -92,7 +92,7 @@ class FinancialDataLoader:
         
         loading_results = {
             'ticker': ticker,
-            'loading_timestamp': datetime.utcnow().isoformat(),
+            'loading_timestamp': datetime.now(timezone.utc).isoformat(),
             'loaded_records': 0,
             'errors': []
         }
@@ -174,7 +174,7 @@ class ETLOrchestrator:
         
         etl_results = {
             'ticker': ticker,
-            'pipeline_start': datetime.utcnow().isoformat(),
+            'pipeline_start': datetime.now(timezone.utc).isoformat(),
             'phases': {}
         }
         
@@ -207,7 +207,7 @@ class ETLOrchestrator:
                 'timestamp': load_results.get('loading_timestamp')
             }
             
-            etl_results['pipeline_end'] = datetime.utcnow().isoformat()
+            etl_results['pipeline_end'] = datetime.now(timezone.utc).isoformat()
             etl_results['status'] = 'completed'
             
             total_records = sum(load_results.get('loaded_records', {}).values())
@@ -216,7 +216,7 @@ class ETLOrchestrator:
         except Exception as e:
             etl_results['status'] = 'failed'
             etl_results['error'] = str(e)
-            etl_results['pipeline_end'] = datetime.utcnow().isoformat()
+            etl_results['pipeline_end'] = datetime.now(timezone.utc).isoformat()
             self.logger.error(f"Financial ETL pipeline failed for {ticker}: {e}")
             raise e
         
@@ -239,7 +239,7 @@ class ETLOrchestrator:
         
         etl_results = {
             'ticker': ticker,
-            'pipeline_start': datetime.utcnow().isoformat(),
+            'pipeline_start': datetime.now(timezone.utc).isoformat(),
             'phases': {}
         }
         
@@ -278,7 +278,7 @@ class ETLOrchestrator:
                 'timestamp': load_results.get('loading_timestamp')
             }
             
-            etl_results['pipeline_end'] = datetime.utcnow().isoformat()
+            etl_results['pipeline_end'] = datetime.now(timezone.utc).isoformat()
             etl_results['status'] = 'completed'
             
             self.logger.info(
@@ -289,7 +289,7 @@ class ETLOrchestrator:
         except Exception as e:
             etl_results['status'] = 'failed'
             etl_results['error'] = str(e)
-            etl_results['pipeline_end'] = datetime.utcnow().isoformat()
+            etl_results['pipeline_end'] = datetime.now(timezone.utc).isoformat()
             self.logger.error(f"Price ETL pipeline failed for {ticker}: {e}")
             raise e
         
@@ -329,7 +329,7 @@ class EconomicDataLoader:
         loading_results = {
             'indicator_name': indicator_name,
             'source': source,
-            'loading_timestamp': datetime.utcnow().isoformat(),
+            'loading_timestamp': datetime.now(timezone.utc).isoformat(),
             'loaded_records': {
                 'indicators': 0,
                 'data_points': 0
@@ -394,7 +394,7 @@ class EconomicETLOrchestrator:
         etl_results = {
             'source': 'eurostat',
             'data_code': data_code,
-            'pipeline_start': datetime.utcnow().isoformat(),
+            'pipeline_start': datetime.now(timezone.utc).isoformat(),
             'phases': {}
         }
         
@@ -426,7 +426,7 @@ class EconomicETLOrchestrator:
                 'timestamp': load_results.get('loading_timestamp')
             }
             
-            etl_results['pipeline_end'] = datetime.utcnow().isoformat()
+            etl_results['pipeline_end'] = datetime.now(timezone.utc).isoformat()
             etl_results['status'] = 'completed'
             
             self.logger.info(f"Eurostat ETL pipeline completed for {data_code}")
@@ -434,7 +434,7 @@ class EconomicETLOrchestrator:
         except Exception as e:
             etl_results['status'] = 'failed'
             etl_results['error'] = str(e)
-            etl_results['pipeline_end'] = datetime.utcnow().isoformat()
+            etl_results['pipeline_end'] = datetime.now(timezone.utc).isoformat()
             self.logger.error(f"Eurostat ETL pipeline failed for {data_code}: {e}")
             raise e
         
@@ -467,7 +467,7 @@ class EconomicETLOrchestrator:
         etl_results = {
             'source': 'ecb',
             'indicator_id': indicator_id,
-            'pipeline_start': datetime.utcnow().isoformat(),
+            'pipeline_start': datetime.now(timezone.utc).isoformat(),
             'phases': {}
         }
         
@@ -499,7 +499,7 @@ class EconomicETLOrchestrator:
                 'timestamp': load_results.get('loading_timestamp')
             }
             
-            etl_results['pipeline_end'] = datetime.utcnow().isoformat()
+            etl_results['pipeline_end'] = datetime.now(timezone.utc).isoformat()
             etl_results['status'] = 'completed'
             
             self.logger.info(f"ECB ETL pipeline completed for {indicator_id}")
@@ -507,7 +507,7 @@ class EconomicETLOrchestrator:
         except Exception as e:
             etl_results['status'] = 'failed'
             etl_results['error'] = str(e)
-            etl_results['pipeline_end'] = datetime.utcnow().isoformat()
+            etl_results['pipeline_end'] = datetime.now(timezone.utc).isoformat()
             self.logger.error(f"ECB ETL pipeline failed for {indicator_id}: {e}")
             raise e
         
@@ -539,7 +539,7 @@ class EconomicETLOrchestrator:
         etl_results = {
             'source': 'fred',
             'series_id': series_id,
-            'pipeline_start': datetime.utcnow().isoformat(),
+            'pipeline_start': datetime.now(timezone.utc).isoformat(),
             'phases': {}
         }
         
@@ -597,7 +597,7 @@ class EconomicETLOrchestrator:
                 'timestamp': load_results.get('loading_timestamp')
             }
             
-            etl_results['pipeline_end'] = datetime.utcnow().isoformat()
+            etl_results['pipeline_end'] = datetime.now(timezone.utc).isoformat()
             etl_results['status'] = 'completed'
             
             self.logger.info(f"FRED ETL pipeline completed for {series_id}")
@@ -605,7 +605,7 @@ class EconomicETLOrchestrator:
         except Exception as e:
             etl_results['status'] = 'failed'
             etl_results['error'] = str(e)
-            etl_results['pipeline_end'] = datetime.utcnow().isoformat()
+            etl_results['pipeline_end'] = datetime.now(timezone.utc).isoformat()
             self.logger.error(f"FRED ETL pipeline failed for {series_id}: {e}")
             raise e
         
@@ -655,7 +655,7 @@ class AlignedDataETLOrchestrator:
         self.logger.info(f"Starting aligned data rebuild for {len(tickers) if tickers else 'all'} tickers")
         
         rebuild_results = {
-            'pipeline_start': datetime.utcnow().isoformat(),
+            'pipeline_start': datetime.now(timezone.utc).isoformat(),
             'tickers_processed': 0,
             'total_records_created': 0,
             'errors': [],
@@ -696,7 +696,7 @@ class AlignedDataETLOrchestrator:
                     self.logger.error(error_msg)
                     rebuild_results['errors'].append(error_msg)
             
-            rebuild_results['pipeline_end'] = datetime.utcnow().isoformat()
+            rebuild_results['pipeline_end'] = datetime.now(timezone.utc).isoformat()
             
             # Log summary
             self.logger.info(
@@ -708,7 +708,7 @@ class AlignedDataETLOrchestrator:
             return rebuild_results
             
         except Exception as e:
-            rebuild_results['pipeline_end'] = datetime.utcnow().isoformat()
+            rebuild_results['pipeline_end'] = datetime.now(timezone.utc).isoformat()
             error_msg = f"Aligned data rebuild failed: {str(e)}"
             self.logger.error(error_msg)
             rebuild_results['errors'].append(error_msg)

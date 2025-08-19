@@ -11,7 +11,7 @@ Designed for comprehensive financial analysis of global companies.
 """
 
 from typing import Dict, Any, List, Tuple, Optional, Union
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from sqlalchemy import create_engine, and_, desc
 from sqlalchemy.orm import sessionmaker, Session
 import pandas as pd
@@ -47,8 +47,17 @@ class DatabaseManager:
         self.db_path = db_path or config.database.path
         self.engine = create_engine(
             f"sqlite:///{self.db_path}",
-            echo=config.database.echo
+            echo=config.database.echo,
+            connect_args={"check_same_thread": False}
         )
+        
+        # Enable foreign key constraints for SQLite
+        from sqlalchemy import event
+        @event.listens_for(self.engine, "connect")
+        def enable_foreign_keys(dbapi_connection, connection_record):
+            cursor = dbapi_connection.cursor()
+            cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.close()
         
         # Create tables
         Base.metadata.create_all(self.engine)
@@ -115,7 +124,7 @@ class DatabaseManager:
                     instrument.currency = currency
                     instrument.market_cap = instrument_info.get('market_cap') or instrument.market_cap
                     instrument.employees = instrument_info.get('employees') or instrument.employees
-                    instrument.updated_at = datetime.utcnow()
+                    instrument.updated_at = datetime.now(timezone.utc)
                     session.commit()
                 
                 self.logger.debug(f"Updated existing instrument record for {ticker}")
@@ -416,7 +425,7 @@ class DatabaseManager:
             instrument.currency = currency
             instrument.market_cap = instrument_info.get('market_cap') or instrument.market_cap
             instrument.employees = instrument_info.get('employees') or instrument.employees
-            instrument.updated_at = datetime.utcnow()
+            instrument.updated_at = datetime.now(timezone.utc)
             
             self.logger.debug(f"Updated existing instrument record for {ticker}")
         else:
@@ -1081,18 +1090,22 @@ class DatabaseManager:
         try:
             with self.get_session() as session:
                 # Delete all data from all tables in proper order (respecting foreign key constraints)
-                session.query(Transaction).delete()
-                session.query(PortfolioHolding).delete()
-                session.query(Portfolio).delete()
-                session.query(EconomicIndicatorData).delete()
-                session.query(EconomicIndicator).delete()
-                session.query(Threshold).delete()
-                session.query(Price).delete()
-                session.query(IncomeStatement).delete()
-                session.query(BalanceSheet).delete()
-                session.query(CashFlow).delete()
-                session.query(FinancialRatio).delete()
-                session.query(Instrument).delete()
+                # Delete child tables first (those with FKs to other tables)
+                session.query(AlignedDailyData).delete()  # FKs to instrument + economic_indicator
+                session.query(Transaction).delete()       # FK to instrument
+                session.query(PortfolioHolding).delete()  # FKs to portfolio + instrument
+                session.query(Price).delete()             # FK to instrument
+                session.query(IncomeStatement).delete()   # FK to instrument
+                session.query(BalanceSheet).delete()      # FK to instrument
+                session.query(CashFlow).delete()          # FK to instrument
+                session.query(FinancialRatio).delete()    # FK to instrument
+                session.query(EconomicIndicatorData).delete()  # FK to economic_indicator
+                session.query(Threshold).delete()         # FK to economic_indicator
+                
+                # Delete parent tables last (those referenced by FKs)
+                session.query(Portfolio).delete()         # Referenced by portfolio_holdings
+                session.query(EconomicIndicator).delete() # Referenced by economic_indicator_data, thresholds, aligned_daily_data
+                session.query(Instrument).delete()        # Referenced by prices, statements, holdings, transactions, aligned_daily_data
                 
                 session.commit()
                 self.logger.info("Cleared all data from database")
@@ -1129,7 +1142,7 @@ class DatabaseManager:
                     # Update existing portfolio
                     portfolio.description = portfolio_config.get('description', portfolio.description)
                     portfolio.currency = portfolio_config.get('currency', portfolio.currency)
-                    portfolio.updated_at = datetime.utcnow()
+                    portfolio.updated_at = datetime.now(timezone.utc)
                     self.logger.debug(f"Updated existing portfolio: {portfolio.name}")
                 else:
                     # Create new portfolio with defaults for missing fields
@@ -1418,7 +1431,7 @@ class DatabaseManager:
             indicator.description = economic_data.get('description', indicator.description)
             indicator.unit = economic_data.get('unit', indicator.unit)
             indicator.frequency = self._parse_frequency(economic_data.get('frequency', 'monthly'))
-            indicator.updated_at = datetime.utcnow()
+            indicator.updated_at = datetime.now(timezone.utc)
             
             self.logger.debug(f"Updated existing economic indicator: {name}")
             return indicator
@@ -1564,7 +1577,7 @@ class DatabaseManager:
                         indicator_id=indicator_db_id,
                         date=fill_date,
                         value=latest_value,
-                        created_at=datetime.utcnow()
+                        created_at=datetime.now(timezone.utc)
                     )
                     new_forward_filled.append(record)
             

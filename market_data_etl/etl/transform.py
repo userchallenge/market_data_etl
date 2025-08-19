@@ -6,7 +6,7 @@ standardized formats. No extraction or loading logic should be here.
 """
 
 from typing import Dict, Any, Optional, List
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 import pandas as pd
 
 from ..utils.logging import get_logger
@@ -49,7 +49,7 @@ class FinancialDataTransformer:
             'ticker': raw_data.get('ticker'),
             'currency': currency,
             'company_info': company_info,
-            'transformation_timestamp': datetime.utcnow().isoformat(),
+            'transformation_timestamp': datetime.now(timezone.utc).isoformat(),
             'statements': {}
         }
         
@@ -93,7 +93,7 @@ class FinancialDataTransformer:
             return {
                 'ticker': ticker,
                 'transformed_data': pd.DataFrame(),
-                'transformation_timestamp': datetime.utcnow().isoformat(),
+                'transformation_timestamp': datetime.now(timezone.utc).isoformat(),
                 'record_count': 0,
                 'instrument_type': raw_price_data.get('instrument_type'),
                 'instrument_info': raw_price_data.get('instrument_info')
@@ -106,7 +106,7 @@ class FinancialDataTransformer:
             'ticker': ticker,
             'start_date': raw_price_data.get('start_date'),
             'end_date': raw_price_data.get('end_date'), 
-            'transformation_timestamp': datetime.utcnow().isoformat(),
+            'transformation_timestamp': datetime.now(timezone.utc).isoformat(),
             'transformed_data': transformed_df,
             'record_count': len(transformed_df),
             'instrument_type': raw_price_data.get('instrument_type'),
@@ -381,7 +381,7 @@ class EconomicDataTransformer:
                 'description': mapping['description'],
                 'unit': self._extract_eurostat_unit(json_data),
                 'frequency': self._extract_eurostat_frequency(json_data),
-                'transformation_timestamp': datetime.utcnow().isoformat(),
+                'transformation_timestamp': datetime.now(timezone.utc).isoformat(),
                 'data_points': data_points
             }
             
@@ -427,7 +427,7 @@ class EconomicDataTransformer:
                 'description': mapping['description'],
                 'unit': self._extract_ecb_unit(json_data),
                 'frequency': 'monthly',  # Most ECB data is monthly
-                'transformation_timestamp': datetime.utcnow().isoformat(),
+                'transformation_timestamp': datetime.now(timezone.utc).isoformat(),
                 'data_points': data_points
             }
             
@@ -472,7 +472,7 @@ class EconomicDataTransformer:
                         'description': 'US Consumer Price Index (CPI)', 
                         'unit': 'index',
                         'frequency': 'monthly',
-                        'transformation_timestamp': datetime.utcnow().isoformat(),
+                        'transformation_timestamp': datetime.now(timezone.utc).isoformat(),
                         'data_points': data_points
                     },
                     {
@@ -482,7 +482,7 @@ class EconomicDataTransformer:
                         'description': 'US CPI (Monthly Rate of Change)', 
                         'unit': 'percent',
                         'frequency': 'monthly',
-                        'transformation_timestamp': datetime.utcnow().isoformat(),
+                        'transformation_timestamp': datetime.now(timezone.utc).isoformat(),
                         'data_points': rate_data_points
                     }
                 ]
@@ -503,7 +503,7 @@ class EconomicDataTransformer:
                 'description': description, 
                 'unit': unit,
                 'frequency': 'monthly',  # FRED data requested as monthly
-                'transformation_timestamp': datetime.utcnow().isoformat(),
+                'transformation_timestamp': datetime.now(timezone.utc).isoformat(),
                 'data_points': data_points
             }
             

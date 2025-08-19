@@ -62,7 +62,7 @@ class TestPriceCommands:
                 ticker='AAPL',
                 from_date='2024-01-01',
                 to_date='2024-01-31',
-                manual_instrument_type=None
+                instrument_type=None
             )
         
         # Should return success
@@ -79,7 +79,7 @@ class TestPriceCommands:
             ticker='',  # Empty ticker
             from_date='2024-01-01',
             to_date='2024-01-31',
-            manual_instrument_type=None
+            instrument_type=None
         )
         
         # Should return error code
@@ -91,7 +91,7 @@ class TestPriceCommands:
             ticker='AAPL',
             from_date='invalid-date',
             to_date='2024-01-31',
-            manual_instrument_type=None
+            instrument_type=None
         )
         
         # Should return error code
@@ -106,7 +106,7 @@ class TestPriceCommands:
             ticker='INVALID_TICKER',
             from_date='2024-01-01',
             to_date='2024-01-31',
-            manual_instrument_type=None
+            instrument_type=None
         )
         
         # Should handle error gracefully
@@ -120,6 +120,14 @@ class TestFundamentalCommands:
     @patch('market_data_etl.etl.load.ETLOrchestrator')
     def test_fetch_fundamentals_command_success(self, mock_orchestrator, mock_db_manager):
         """Test successful fundamentals fetching."""
+        # Mock database manager
+        mock_db_instance = MagicMock()
+        mock_db_manager.return_value = mock_db_instance
+        mock_db_instance.get_instrument_info.return_value = {
+            'exists': True,
+            'instrument_type': 'stock'  # Valid InstrumentType enum value
+        }
+        
         # Mock successful ETL execution
         mock_etl_instance = MagicMock()
         mock_orchestrator.return_value = mock_etl_instance
@@ -196,13 +204,16 @@ class TestEconomicCommands:
         
         assert result == 0
     
-    def test_fetch_economic_command_missing_fred_key(self):
+    @patch('market_data_etl.config.config')
+    def test_fetch_economic_command_missing_fred_key(self, mock_config):
         """Test FRED command without API key."""
-        with patch.dict('os.environ', {}, clear=True):  # Clear FRED_API_KEY
-            result = fetch_economic_indicator_command(
-                name='unemployment_monthly_rate_us',
-                from_date='2024-01-01'
-            )
+        # Mock config to return None for FRED API key
+        mock_config.api.fred_api_key = None
+        
+        result = fetch_economic_indicator_command(
+            name='unemployment_monthly_rate_us',
+            from_date='2024-01-01'
+        )
         
         assert result == 1  # Should fail without API key
     
@@ -240,12 +251,15 @@ class TestPortfolioCommands:
         """Test successful portfolio loading."""
         mock_db_instance = MagicMock()
         mock_db_manager.return_value = mock_db_instance
-        mock_db_instance.load_portfolio_from_config.return_value = 1  # Portfolio ID
+        # Mock portfolio object
+        mock_portfolio = MagicMock()
+        mock_portfolio.name = 'Test Portfolio'
+        mock_db_instance.load_portfolio_from_config.return_value = mock_portfolio
         
         captured_output = StringIO()
         
         with patch('sys.stdout', captured_output):
-            result = load_portfolio_command(portfolio_file=temp_portfolio_file)
+            result = load_portfolio_command(file_path=temp_portfolio_file)
         
         assert result == 0
         output = captured_output.getvalue()
@@ -254,7 +268,7 @@ class TestPortfolioCommands:
     
     def test_load_portfolio_command_missing_file(self):
         """Test portfolio loading with missing file."""
-        result = load_portfolio_command(portfolio_file='nonexistent.json')
+        result = load_portfolio_command(file_path='nonexistent.json')
         
         assert result == 1
     
@@ -265,7 +279,7 @@ class TestPortfolioCommands:
             invalid_file = f.name
         
         try:
-            result = load_portfolio_command(portfolio_file=invalid_file)
+            result = load_portfolio_command(file_path=invalid_file)
             assert result == 1
         finally:
             Path(invalid_file).unlink(missing_ok=True)
@@ -292,13 +306,13 @@ class TestPortfolioCommands:
         }
         
         # Load portfolio first
-        load_portfolio_command(portfolio_file=temp_portfolio_file)
+        load_portfolio_command(file_path=temp_portfolio_file)
         
         captured_output = StringIO()
         
         with patch('sys.stdout', captured_output):
             result = fetch_portfolio_prices_command(
-                portfolio='Test Portfolio',
+                portfolio_name='Test Portfolio',
                 from_date='2024-01-01'
             )
         
@@ -315,11 +329,30 @@ class TestInfoCommands:
         """Test ticker info command."""
         mock_db_instance = MagicMock()
         mock_db_manager.return_value = mock_db_instance
+        # Mock the correct method that the code actually calls
         mock_db_instance.get_instrument_info.return_value = {
-            'ticker_symbol': 'AAPL',
-            'instrument_name': 'Apple Inc.',
-            'sector': 'Technology',
-            'currency': 'USD'
+            'exists': True,
+            'instrument': {
+                'ticker_symbol': 'AAPL',
+                'name': 'Apple Inc.',
+                'sector': 'Technology',
+                'industry': 'Consumer Electronics',
+                'country': 'US',
+                'currency': 'USD',
+                'market_cap': 2500000000000,  # $2.5T as plain int
+                'created_at': '2024-01-01 00:00:00'
+            },
+            'price_data': {
+                'count': 250,
+                'date_range': ('2024-01-01', '2024-12-31'),  # Tuple as expected
+                'latest_price': 175.50
+            },
+            'financial_statements': {
+                'income_statements': 12,
+                'balance_sheets': 12,
+                'cash_flows': 12,
+                'financial_ratios': 48
+            }
         }
         
         captured_output = StringIO()
@@ -358,7 +391,7 @@ class TestInfoCommands:
         captured_output = StringIO()
         
         with patch('sys.stdout', captured_output):
-            result = economic_info_command(indicator='inflation_monthly_euro')
+            result = economic_info_command(indicator_name='inflation_monthly_euro')
         
         assert result == 0
         output = captured_output.getvalue()
@@ -370,17 +403,28 @@ class TestInfoCommands:
         """Test portfolio info command."""
         mock_db_instance = MagicMock()
         mock_db_manager.return_value = mock_db_instance
-        mock_db_instance.get_portfolio_info.return_value = {
-            'name': 'Test Portfolio',
-            'description': 'Test portfolio',
-            'holdings_count': 3,
-            'holdings': ['AAPL', 'MSFT', 'GOOGL']
+        mock_db_instance.get_portfolio_summary.return_value = {
+            'exists': True,
+            'portfolio': {
+                'name': 'Test Portfolio',
+                'description': 'Test portfolio for demonstration',
+                'currency': 'USD',
+                'created_date': '2024-01-01',
+                'created_at': '2024-01-01T00:00:00'
+            },
+            'holdings': {
+                'total_count': 3,
+                'breakdown': {'stock': 2, 'etf': 1}
+            },
+            'transactions': {
+                'count': 10
+            }
         }
         
         captured_output = StringIO()
         
         with patch('sys.stdout', captured_output):
-            result = portfolio_info_command(portfolio='Test Portfolio')
+            result = portfolio_info_command(portfolio_name='Test Portfolio')
         
         assert result == 0
         output = captured_output.getvalue()
@@ -398,7 +442,7 @@ class TestCLIErrorHandling:
             ticker='AAPL',
             from_date='not-a-date',
             to_date='2024-01-31',
-            manual_instrument_type=None
+            instrument_type=None
         )
         
         assert result == 1
@@ -434,8 +478,27 @@ class TestCLIOutputFormatting:
         mock_db_instance = MagicMock()
         mock_db_manager.return_value = mock_db_instance
         mock_db_instance.get_instrument_info.return_value = {
-            'ticker_symbol': 'TEST',
-            'instrument_name': 'Test Company'
+            'exists': True,
+            'instrument': {
+                'ticker_symbol': 'TEST',
+                'name': 'Test Company',
+                'sector': 'Technology',
+                'industry': 'Software',
+                'country': 'US',
+                'currency': 'USD',
+                'market_cap': 1000000000,
+                'created_at': '2024-01-01T00:00:00'
+            },
+            'price_data': {
+                'count': 100,
+                'date_range': ('2024-01-01', '2024-12-31')
+            },
+            'financial_statements': {
+                'income_statements': 4,
+                'balance_sheets': 4,
+                'cash_flows': 4,
+                'financial_ratios': 16
+            }
         }
         
         captured_output = StringIO()
@@ -497,10 +560,25 @@ class TestCLIIntegrationScenarios:
                     # Setup mocks
                     mock_db_instance = MagicMock()
                     mock_db.return_value = mock_db_instance
-                    mock_db_instance.load_portfolio_from_config.return_value = 1
+                    # Mock portfolio object with name attribute
+                    mock_portfolio = MagicMock()
+                    mock_portfolio.name = 'Integration Test Portfolio'
+                    mock_db_instance.load_portfolio_from_config.return_value = mock_portfolio
                     mock_db_instance.get_portfolio_by_name.return_value = {
                         'name': 'Integration Test Portfolio',
                         'holdings': ['AAPL', 'MSFT']
+                    }
+                    mock_db_instance.get_portfolio_summary.return_value = {
+                        'exists': True,
+                        'portfolio': {
+                            'name': 'Integration Test Portfolio',
+                            'description': 'Test portfolio',
+                            'currency': 'USD',
+                            'created_date': '2024-01-01',
+                            'created_at': '2024-01-01T00:00:00'
+                        },
+                        'holdings': {'total_count': 2, 'breakdown': {'stock': 2}},
+                        'transactions': {'count': 0}
                     }
                     
                     mock_etl_instance = MagicMock()
@@ -511,16 +589,16 @@ class TestCLIIntegrationScenarios:
                     }
                     
                     # Execute workflow
-                    step1 = load_portfolio_command(portfolio_file=portfolio_file)
+                    step1 = load_portfolio_command(file_path=portfolio_file)
                     assert step1 == 0
                     
                     step2 = fetch_portfolio_prices_command(
-                        portfolio='Integration Test Portfolio',
+                        portfolio_name='Integration Test Portfolio',
                         from_date='2024-01-01'
                     )
                     assert step2 == 0
                     
-                    step3 = portfolio_info_command(portfolio='Integration Test Portfolio')
+                    step3 = portfolio_info_command(portfolio_name='Integration Test Portfolio')
                     assert step3 == 0
         
         finally:
@@ -535,7 +613,7 @@ class TestCLIIntegrationScenarios:
             ticker='INVALID',
             from_date='bad-date',
             to_date='2024-01-31',
-            manual_instrument_type=None
+            instrument_type=None
         )
         assert result1 == 1
         
@@ -544,9 +622,26 @@ class TestCLIIntegrationScenarios:
             mock_db_instance = MagicMock()
             mock_db.return_value = mock_db_instance
             mock_db_instance.get_instrument_info.return_value = {
-                'ticker_symbol': 'VALID',
-                'instrument_name': 'Valid Company'
+                'exists': True,
+                'instrument': {
+                    'ticker_symbol': 'VALID',
+                    'name': 'Valid Company',
+                    'sector': 'Technology',
+                    'industry': 'Software',
+                    'country': 'US',
+                    'currency': 'USD',
+                    'market_cap': 1000000000,
+                    'employees': 50000,
+                    'created_at': '2024-01-01T00:00:00'
+                },
+                'price_data': {'count': 50, 'date_range': ('2024-01-01', '2024-12-31')},
+                'financial_statements': {
+                    'income_statements': 4,
+                    'balance_sheets': 4,
+                    'cash_flows': 4,
+                    'financial_ratios': 16
+                }
             }
             
-            result2 = ticker_info_command(ticker='VALID')
+            result2 = db_info_command(ticker='VALID')
             assert result2 == 0

@@ -11,7 +11,7 @@ Designed for comprehensive financial analysis of global companies.
 """
 
 from sqlalchemy import Column, Integer, String, Float, Date, DateTime, ForeignKey, Index, Text, Enum
-from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import declarative_base
 from sqlalchemy.orm import relationship
 from datetime import datetime
 import enum
