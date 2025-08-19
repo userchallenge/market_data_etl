@@ -1343,12 +1343,13 @@ class DatabaseManager:
     # ECONOMIC DATA OPERATIONS
     # =============================================================================
     
-    def store_economic_data(self, economic_data: Dict[str, Any]) -> Dict[str, int]:
+    def store_economic_data(self, economic_data: Dict[str, Any], auto_extend_to_today: bool = False) -> Dict[str, int]:
         """
         Store economic indicator data in the database.
         
         Args:
             economic_data: Transformed economic data dictionary
+            auto_extend_to_today: Whether to forward-fill data to today's date when no end date specified
             
         Returns:
             Dictionary with counts of stored records
@@ -1365,9 +1366,15 @@ class DatabaseManager:
                 # Get or create economic indicator
                 indicator = self._get_or_create_economic_indicator(session, economic_data)
                 
-                # Store data points
+                # Store data points (API data takes precedence over forward-filled)
                 data_points = economic_data.get('data_points', [])
                 stored_points = self._store_economic_data_points(session, indicator.id, data_points)
+                
+                # Forward-fill to today's date if auto_extend_to_today is True
+                forward_filled_points = 0
+                if auto_extend_to_today and data_points:
+                    forward_filled_points = self._forward_fill_to_today(session, indicator.id, data_points)
+                    stored_points += forward_filled_points
                 
                 session.commit()
                 
@@ -1481,6 +1488,99 @@ class DatabaseManager:
             self.logger.info(f"Inserted {len(new_records)} new records for indicator ID {indicator_db_id}")
         
         return stored_count
+    
+    def _forward_fill_to_today(
+        self,
+        session: Session,
+        indicator_db_id: int,
+        api_data_points: List[Dict[str, Any]]
+    ) -> int:
+        """
+        Forward-fill economic indicator data from latest API date to today's date.
+        
+        API data takes precedence over forward-filled data. This method creates
+        forward-filled records only for dates that don't have real API data.
+        
+        Args:
+            session: Database session
+            indicator_db_id: Database ID of the economic indicator
+            api_data_points: List of API data points just stored
+            
+        Returns:
+            Number of forward-filled records created
+        """
+        if not api_data_points:
+            return 0
+        
+        try:
+            from dateutil.rrule import rrule, MONTHLY
+            from dateutil.relativedelta import relativedelta
+            
+            # Find the latest date and value from API data
+            latest_point = max(api_data_points, key=lambda x: x['date'])
+            latest_date = latest_point['date']
+            latest_value = latest_point['value']
+            
+            # Convert to proper date objects if needed
+            if isinstance(latest_date, str):
+                latest_date = datetime.strptime(latest_date, '%Y-%m-%d').date()
+            elif hasattr(latest_date, 'date'):
+                latest_date = latest_date.date()
+            
+            today = date.today()
+            
+            # Only forward-fill if latest_date is before today
+            if latest_date >= today:
+                return 0
+            
+            self.logger.info(f"Forward-filling indicator {indicator_db_id} from {latest_date} to {today} with value {latest_value}")
+            
+            # Generate monthly dates from next month after latest_date through today
+            start_fill_date = latest_date + relativedelta(months=1)
+            start_fill_date = start_fill_date.replace(day=1)  # First of month
+            
+            # Create forward-filled records for each month
+            fill_dates = []
+            current_date = start_fill_date
+            while current_date <= today:
+                fill_dates.append(current_date)
+                current_date += relativedelta(months=1)
+            
+            if not fill_dates:
+                return 0
+            
+            # Check which dates already exist (to avoid overwriting real API data)
+            existing_dates = set(
+                row[0] for row in session.query(EconomicIndicatorData.date)
+                .filter(EconomicIndicatorData.indicator_id == indicator_db_id)
+                .filter(EconomicIndicatorData.date.in_(fill_dates))
+                .all()
+            )
+            
+            # Create forward-filled records only for dates that don't exist
+            new_forward_filled = []
+            for fill_date in fill_dates:
+                if fill_date not in existing_dates:
+                    record = EconomicIndicatorData(
+                        indicator_id=indicator_db_id,
+                        date=fill_date,
+                        value=latest_value,
+                        created_at=datetime.utcnow()
+                    )
+                    new_forward_filled.append(record)
+            
+            # Insert forward-filled records
+            if new_forward_filled:
+                session.add_all(new_forward_filled)
+                self.logger.info(f"Forward-filled {len(new_forward_filled)} records for indicator {indicator_db_id}")
+                return len(new_forward_filled)
+            else:
+                self.logger.debug(f"No forward-fill needed - all dates already have data")
+                return 0
+                
+        except Exception as e:
+            self.logger.error(f"Failed to forward-fill indicator {indicator_db_id}: {e}")
+            return 0
     
     def _parse_frequency(self, frequency_str: str) -> Frequency:
         """Parse frequency string to enum."""

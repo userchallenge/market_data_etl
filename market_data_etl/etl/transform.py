@@ -801,14 +801,13 @@ class EconomicDataTransformer:
                 'source_identifier': 'ei_lmhr_m',
                 'description': 'Eurozone Unemployment Rate'
             },
-            ('ecb', 'FM.B.U2.EUR.4F.KR.MRR_FR.LEV'): {
+            ('ecb', 'FM.D.U2.EUR.4F.KR.MRR_FR.LEV'): {
                 'name': 'interest_rate_change_day_euro',
                 'source': 'ecb',
-                'source_identifier': 'FM; B.U2.EUR.4F.KR.MRR_FR.LEV',
+                'source_identifier': 'FM; D.U2.EUR.4F.KR.MRR_FR.LEV',
                 'description': 'Eurozone Interest Rate (Main Refinancing Operations)'
             },
-            # Note: Both ECB indicators map to same source_identifier but different names
-            ('ecb', 'FM; B.U2.EUR.4F.KR.MRR_FR.LEV'): {
+            ('ecb', 'FM.B.U2.EUR.4F.KR.MRR_FR.LEV'): {
                 'name': 'interest_rate_monthly_euro',
                 'source': 'ecb',
                 'source_identifier': 'FM; B.U2.EUR.4F.KR.MRR_FR.LEV', 

@@ -223,13 +223,14 @@ class EconomicDataExtractor:
         self.fetcher = EconomicDataFetcher()
         self.logger = get_logger(__name__)
     
-    def extract_eurostat_data(self, data_code: str, from_date: str) -> Dict[str, Any]:
+    def extract_eurostat_data(self, data_code: str, from_date: str, to_date: str = None) -> Dict[str, Any]:
         """
         Extract raw economic data from Eurostat API.
         
         Args:
             data_code: Eurostat dataset code
             from_date: Start date for data extraction
+            to_date: End date for data extraction (defaults to today if not specified)
             
         Returns:
             Dictionary with raw data from Eurostat (no transformation)
@@ -240,7 +241,7 @@ class EconomicDataExtractor:
         self.logger.info(f"Extracting Eurostat data for {data_code}")
         
         try:
-            raw_data = self.fetcher.fetch_eurostat_json(data_code, from_date)
+            raw_data = self.fetcher.fetch_eurostat_json(data_code, from_date, to_date)
             
             if not raw_data.get('raw_data'):
                 raise YahooFinanceError(f"No data returned from Eurostat for {data_code}")

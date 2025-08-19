@@ -309,23 +309,24 @@ class EconomicDataLoader:
         self.logger = get_logger(__name__)
         self.db_manager = db_manager or DatabaseManager()
     
-    def load_economic_data(self, transformed_data: Dict[str, Any]) -> Dict[str, Any]:
+    def load_economic_data(self, transformed_data: Dict[str, Any], auto_extend_to_today: bool = False) -> Dict[str, Any]:
         """
         Load transformed economic data into database.
         
         Args:
             transformed_data: Transformed data from EconomicDataTransformer
+            auto_extend_to_today: Whether to forward-fill data to today's date when no end date specified
             
         Returns:
             Dictionary with loading results and statistics
         """
-        indicator_id = transformed_data.get('indicator_id')
+        indicator_name = transformed_data.get('name')  # Use 'name' instead of 'indicator_id'
         source = transformed_data.get('source')
         
-        self.logger.info(f"Loading economic data for {source}/{indicator_id}")
+        self.logger.info(f"Loading economic data for {source}/{indicator_name}")
         
         loading_results = {
-            'indicator_id': indicator_id,
+            'indicator_name': indicator_name,
             'source': source,
             'loading_timestamp': datetime.utcnow().isoformat(),
             'loaded_records': {
@@ -337,15 +338,15 @@ class EconomicDataLoader:
         
         try:
             # Store indicator and data points using database manager
-            results = self.db_manager.store_economic_data(transformed_data)
+            results = self.db_manager.store_economic_data(transformed_data, auto_extend_to_today)
             
             loading_results['loaded_records'] = results
             
             total_loaded = results.get('indicators', 0) + results.get('data_points', 0)
-            self.logger.info(f"Successfully loaded {total_loaded} records for {source}/{indicator_id}")
+            self.logger.info(f"Successfully loaded {total_loaded} records for {source}/{indicator_name}")
             
         except Exception as e:
-            error_msg = f"Failed to load economic data for {source}/{indicator_id}: {str(e)}"
+            error_msg = f"Failed to load economic data for {source}/{indicator_name}: {str(e)}"
             self.logger.error(error_msg)
             loading_results['errors'].append(error_msg)
             raise e
@@ -374,13 +375,15 @@ class EconomicETLOrchestrator:
         self.transformer = EconomicDataTransformer()
         self.loader = EconomicDataLoader(self.db_manager)
     
-    def run_eurostat_etl(self, data_code: str, from_date: str) -> Dict[str, Any]:
+    def run_eurostat_etl(self, data_code: str, from_date: str, to_date: str = None, auto_extend_to_today: bool = False) -> Dict[str, Any]:
         """
         Run complete Eurostat data ETL pipeline.
         
         Args:
             data_code: Eurostat dataset code
             from_date: Start date for data
+            to_date: End date for data (defaults to today if not specified)
+            auto_extend_to_today: Whether to forward-fill data to today when no to_date specified
             
         Returns:
             ETL results with statistics from each phase
@@ -397,7 +400,7 @@ class EconomicETLOrchestrator:
         try:
             # EXTRACT phase
             self.logger.info(f"Extract phase: extracting Eurostat data for {data_code}")
-            raw_data = self.extractor.extract_eurostat_data(data_code, from_date)
+            raw_data = self.extractor.extract_eurostat_data(data_code, from_date, to_date)
             etl_results['phases']['extract'] = {
                 'status': 'completed',
                 'timestamp': raw_data.get('extraction_timestamp')
@@ -414,7 +417,7 @@ class EconomicETLOrchestrator:
             
             # LOAD phase
             self.logger.info(f"Load phase: loading Eurostat data for {data_code}")
-            load_results = self.loader.load_economic_data(transformed_data)
+            load_results = self.loader.load_economic_data(transformed_data, auto_extend_to_today)
             etl_results['phases']['load'] = {
                 'status': 'completed',
                 'loaded_records': load_results.get('loaded_records', {}),
@@ -441,7 +444,8 @@ class EconomicETLOrchestrator:
         dataflow_ref: str, 
         series_key: str, 
         from_date: str, 
-        to_date: str
+        to_date: str,
+        auto_extend_to_today: bool = False
     ) -> Dict[str, Any]:
         """
         Run complete ECB data ETL pipeline.
@@ -451,6 +455,7 @@ class EconomicETLOrchestrator:
             series_key: ECB series key
             from_date: Start date for data
             to_date: End date for data
+            auto_extend_to_today: Whether to forward-fill data to today when no end date specified
             
         Returns:
             ETL results with statistics from each phase
@@ -485,7 +490,7 @@ class EconomicETLOrchestrator:
             
             # LOAD phase
             self.logger.info(f"Load phase: loading ECB data for {indicator_id}")
-            load_results = self.loader.load_economic_data(transformed_data)
+            load_results = self.loader.load_economic_data(transformed_data, auto_extend_to_today)
             etl_results['phases']['load'] = {
                 'status': 'completed',
                 'loaded_records': load_results.get('loaded_records', {}),
@@ -512,7 +517,8 @@ class EconomicETLOrchestrator:
         series_id: str, 
         api_key: str, 
         from_date: str, 
-        to_date: str
+        to_date: str,
+        auto_extend_to_today: bool = False
     ) -> Dict[str, Any]:
         """
         Run complete FRED data ETL pipeline.
@@ -522,6 +528,7 @@ class EconomicETLOrchestrator:
             api_key: FRED API key
             from_date: Start date for data
             to_date: End date for data
+            auto_extend_to_today: Whether to forward-fill data to today when no end date specified
             
         Returns:
             ETL results with statistics from each phase
@@ -570,7 +577,7 @@ class EconomicETLOrchestrator:
                 # Load multiple indicators
                 all_load_results = []
                 for data in transformed_data:
-                    load_result = self.loader.load_economic_data(data)
+                    load_result = self.loader.load_economic_data(data, auto_extend_to_today)
                     all_load_results.append(load_result)
                 
                 # Combine results
@@ -581,7 +588,7 @@ class EconomicETLOrchestrator:
                     'loading_timestamp': all_load_results[0].get('loading_timestamp') if all_load_results else None
                 }
             else:
-                load_results = self.loader.load_economic_data(transformed_data)
+                load_results = self.loader.load_economic_data(transformed_data, auto_extend_to_today)
             etl_results['phases']['load'] = {
                 'status': 'completed',
                 'loaded_records': load_results.get('loaded_records', {}),
@@ -734,6 +741,7 @@ class AlignedDataETLOrchestrator:
             return {'records_created': 0, 'trading_days': 0, 'exchange': exchange}
         
         # Determine date range from available data
+        # CRITICAL: Allow alignment beyond price data range to forward-fill economic indicators
         if price_data.empty:
             actual_start_date = start_date or date(2020, 1, 1)
             actual_end_date = end_date or date.today()
@@ -741,12 +749,26 @@ class AlignedDataETLOrchestrator:
             price_start = price_data.index.min().date() if hasattr(price_data.index.min(), 'date') else price_data.index.min()
             price_end = price_data.index.max().date() if hasattr(price_data.index.max(), 'date') else price_data.index.max()
             
+            # Start date: constrained by price data availability
             actual_start_date = max(start_date or price_start, price_start)
-            actual_end_date = min(end_date or price_end, price_end)
+            
+            # End date: EXTEND beyond price data to forward-fill economic indicators
+            # This allows economic indicators to be forward-filled to today's date
+            # even if price data is outdated
+            if end_date:
+                actual_end_date = end_date  # Use requested end date
+            else:
+                actual_end_date = max(price_end, date.today())  # Extend to today if no explicit end date
         
         # Get trading calendar for this ticker
+        # Extended range allows forward-filling economic indicators beyond price data
         trading_days = self.transformer.get_date_range_for_instrument(
             ticker, actual_start_date, actual_end_date, exchange
+        )
+        
+        self.logger.info(
+            f"Date range for {ticker}: {actual_start_date} to {actual_end_date} "
+            f"({len(trading_days)} trading days, price data through {price_end if not price_data.empty else 'N/A'})"
         )
         
         if not trading_days:

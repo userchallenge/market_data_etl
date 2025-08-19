@@ -120,8 +120,8 @@
       "name": "Asmodee Group AB (publ) Class B",
       "isin": "SE0023615638",
       "yahoo_ticker": "ASMDEE-B.ST",
-      "type": "stock",
-      "sector": "Consumer Cyclical",
+      "type": "equity",
+      "sector": "Consumer Cyclical / Leisure",
       "country": "SE"
     },
     "ATT.ST": {
@@ -142,7 +142,7 @@
     },
     "EMBRAC-B.ST": {
       "name": "Embracer Group AB (B)",
-      "isin": "SE0016828511",
+      "isin": "SE0013374266",
       "yahoo_ticker": "EMBRAC-B.ST",
       "type": "stock",
       "sector": "Communication Services",
@@ -213,15 +213,15 @@
       "country": "SE"
     },
     "IE00B6YX5C33": {
-      "name": "SPDR S&P 500 UCITS ETF",
+      "name": "SPDR S&P 500 UCITS ETF (Dist)",
       "isin": "IE00B6YX5C33",
       "yahoo_ticker": "SPY5.DE",
       "type": "etf",
       "fund_type": "equity",
       "country": "IE"
     },
-    "LU0086884042": {
-      "name": "SEB Global Index - Lux",
+    "SE0000984180": {
+      "name": "SEB Global Index - Lux (share class unspecified)",
       "isin": "LU0086884042",
       "yahoo_ticker": null,
       "type": "fund",
@@ -237,7 +237,7 @@
       "country": "NO"
     },
     "LU0162594632": {
-      "name": "East Capital Eastern Europe",
+      "name": "East Capital Eastern Europe (A Q?)",
       "isin": "LU0162594632",
       "yahoo_ticker": null,
       "type": "fund",

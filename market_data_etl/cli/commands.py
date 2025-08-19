@@ -10,6 +10,7 @@ from datetime import date, datetime
 import json
 import csv
 import os
+import pandas as pd
 
 from ..etl.load import ETLOrchestrator
 from ..database.manager import DatabaseManager
@@ -1048,10 +1049,7 @@ def fetch_economic_indicator_command(
         
         source, source_identifier, description = mapping[name]
         
-        # Validate required to_date for ECB/FRED
-        if source in ['ecb', 'fred'] and not to_date:
-            print(f"ERROR: --to required for {source.upper()} indicators")
-            return ERROR_EXIT_CODE
+        # Note: ECB/FRED now support auto-extension to today's date when no --to specified
         
         # Get FRED API key if needed
         api_key = None
@@ -1063,15 +1061,22 @@ def fetch_economic_indicator_command(
         
         print(f"Fetching {description}")
         
-        # Run ETL pipeline
+        # Track if to_date was user-specified vs auto-extended
+        auto_extend_to_today = False
+        if not to_date:
+            to_date = date.today().strftime('%Y-%m-%d')
+            auto_extend_to_today = True
+            print(f"   Fetching through: {to_date} (default: today)")
+        
+        # Run ETL pipeline with auto-extend flag
         etl = EconomicETLOrchestrator()
         if source == 'eurostat':
-            results = etl.run_eurostat_etl(source_identifier, from_date)
+            results = etl.run_eurostat_etl(source_identifier, from_date, to_date, auto_extend_to_today)
         elif source == 'ecb':
             parts = source_identifier.split('.', 1)
-            results = etl.run_ecb_etl(parts[0], parts[1], from_date, to_date)
+            results = etl.run_ecb_etl(parts[0], parts[1], from_date, to_date, auto_extend_to_today)
         elif source == 'fred':
-            results = etl.run_fred_etl(source_identifier, api_key, from_date, to_date)
+            results = etl.run_fred_etl(source_identifier, api_key, from_date, to_date, auto_extend_to_today)
         
         # Report results
         if results['status'] == 'completed':
@@ -1088,6 +1093,87 @@ def fetch_economic_indicator_command(
     except Exception as e:
         logger = get_logger(__name__)
         logger.error(f"Unexpected error in fetch_economic_indicator_command: {e}", exc_info=True)
+        print(f"ERROR: Unexpected error: {e}")
+        return ERROR_EXIT_CODE
+
+
+def fetch_all_economic_indicators_command(
+    from_date: str,
+    to_date: Optional[str] = None
+) -> int:
+    """
+    Handle fetch-all-economic-indicators command to fetch all available economic indicators.
+    
+    Args:
+        from_date: Start date in YYYY-MM-DD format
+        to_date: End date in YYYY-MM-DD format (optional, defaults to today)
+        
+    Returns:
+        Exit code (0 for success, 1 for error)
+    """
+    try:
+        # Validate dates
+        validate_date_string(from_date, "from_date")
+        if to_date:
+            validate_date_string(to_date, "to_date")
+        
+        print(f"🔄 Fetching all economic indicators...")
+        print(f"   Date range: {from_date} to {to_date or 'today (auto-extend)'}")
+        print()
+        
+        # Get all available indicators
+        mapping = _get_indicator_reverse_mapping()
+        total_indicators = len(mapping)
+        
+        # Track results
+        successful_fetches = []
+        failed_fetches = []
+        total_data_points = 0
+        
+        # Process each indicator
+        for indicator_name, (source, source_identifier, description) in mapping.items():
+            try:
+                print(f"Fetching {description}")
+                
+                # Call the existing fetch logic
+                if to_date:
+                    result = fetch_economic_indicator_command(indicator_name, from_date, to_date)
+                else:
+                    result = fetch_economic_indicator_command(indicator_name, from_date)
+                
+                if result == SUCCESS_EXIT_CODE:
+                    successful_fetches.append(indicator_name)
+                    # Note: We can't easily get data points count from existing function
+                    print(f"✅ {indicator_name}: Success")
+                else:
+                    failed_fetches.append(indicator_name)
+                    print(f"❌ {indicator_name}: Failed")
+                    
+            except Exception as e:
+                failed_fetches.append(indicator_name)
+                print(f"❌ {indicator_name}: Error - {str(e)}")
+        
+        print()
+        print("📊 Summary:")
+        print(f"- Successfully fetched: {len(successful_fetches)}/{total_indicators} indicators")
+        if successful_fetches:
+            print(f"- Successful: {', '.join(successful_fetches)}")
+        if failed_fetches:
+            print(f"- Failed: {', '.join(failed_fetches)}")
+        
+        if failed_fetches:
+            print(f"⚠️  {len(failed_fetches)} indicators failed to fetch")
+            return ERROR_EXIT_CODE
+        else:
+            print("✅ All economic indicators fetched successfully")
+            return SUCCESS_EXIT_CODE
+            
+    except ValidationError as e:
+        print(f"ERROR: {e}")
+        return ERROR_EXIT_CODE
+    except Exception as e:
+        logger = get_logger(__name__)
+        logger.error(f"Unexpected error in fetch_all_economic_indicators_command: {e}", exc_info=True)
         print(f"ERROR: Unexpected error: {e}")
         return ERROR_EXIT_CODE
 
@@ -1432,7 +1518,7 @@ def _get_indicator_reverse_mapping() -> Dict[str, tuple]:
     return {
         'inflation_monthly_euro': ('eurostat', 'prc_hicp_mmor', 'Eurozone Inflation (HICP, monthly rate of change)'),
         'unemployment_rate_monthly_euro': ('eurostat', 'ei_lmhr_m', 'Eurozone Unemployment Rate'),
-        'interest_rate_change_day_euro': ('ecb', 'FM.B.U2.EUR.4F.KR.MRR_FR.LEV', 'Eurozone Interest Rate (Main Refinancing Operations)'),
+        'interest_rate_change_day_euro': ('ecb', 'FM.D.U2.EUR.4F.KR.MRR_FR.LEV', 'Eurozone Interest Rate (Main Refinancing Operations)'),
         'interest_rate_monthly_euro': ('ecb', 'FM.B.U2.EUR.4F.KR.MRR_FR.LEV', 'Eurozone Monthly Interest Rate (Main Refinancing Operations)'),
         'unemployment_monthly_rate_us': ('fred', 'UNRATE', 'US Unemployment Rate'),
         'inflation_index_monthly_us': ('fred', 'CPIAUCSL', 'US Consumer Price Index (CPI)'),

@@ -519,13 +519,14 @@ class EconomicDataFetcher(DataFetcher):
         super().__init__()
         self.logger = get_logger(__name__)
     
-    def fetch_eurostat_json(self, data_code: str, from_date: str) -> Dict[str, Any]:
+    def fetch_eurostat_json(self, data_code: str, from_date: str, to_date: str = None) -> Dict[str, Any]:
         """
         Fetch data from Eurostat API for European economic statistics.
         
         Args:
             data_code: Eurostat dataset code (e.g., "prc_hicp_midx")
             from_date: Start date in 'YYYY-MM-DD' format
+            to_date: End date in 'YYYY-MM-DD' format (defaults to today if not specified)
             
         Returns:
             Dictionary with raw JSON response
@@ -534,14 +535,22 @@ class EconomicDataFetcher(DataFetcher):
             YahooFinanceError: If request fails after retries
         """
         def _fetch():
-            self.logger.info(f"Fetching Eurostat data for {data_code} from {from_date}")
+            # Default to_date to today if not specified
+            if not to_date:
+                to_date_used = datetime.now().strftime('%Y-%m-%d')
+            else:
+                to_date_used = to_date
+            
+            self.logger.info(f"Fetching Eurostat data for {data_code} from {from_date} to {to_date_used}")
             
             from_year_month = self._to_year_month(from_date)
+            to_year_month = self._to_year_month(to_date_used)
             
             url = (
                 f"https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data/{data_code}"
                 f"?geo=EU27_2020"
                 f"&sinceTimePeriod={from_year_month}"
+                f"&untilTimePeriod={to_year_month}"
                 f"&format=JSON"
             )
             
@@ -555,7 +564,9 @@ class EconomicDataFetcher(DataFetcher):
                     'source': 'eurostat',
                     'data_code': data_code,
                     'from_date': from_date,
+                    'to_date': to_date_used,
                     'from_year_month': from_year_month,
+                    'to_year_month': to_year_month,
                     'url': url,
                     'extraction_timestamp': datetime.utcnow().isoformat(),
                     'raw_data': json_data

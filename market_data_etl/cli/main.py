@@ -23,6 +23,7 @@ from .commands import (
     fetch_portfolio_fundamentals_command,
     portfolio_info_command,
     fetch_economic_indicator_command,
+    fetch_all_economic_indicators_command,
     load_price_csv_command,
     generate_price_csv_template_command,
     update_instrument_types_command,
@@ -46,6 +47,8 @@ Examples:
   %(prog)s fetch-financial-statements --ticker AAPL
   %(prog)s fetch-economic-indicator --name unemployment_monthly_rate_us --from 2024-01-01 --to 2024-12-31
   %(prog)s fetch-economic-indicator --name inflation_monthly_euro --from 2024-01-01
+  %(prog)s fetch-all-economic-indicators --from 2020-01-01
+  %(prog)s fetch-all-economic-indicators --from 2020-01-01 --to 2024-12-31
   %(prog)s db-info --ticker VOLV-B.ST
   %(prog)s clear-database --all
   %(prog)s load-portfolio --file ./portfolios/my_portfolio.json
@@ -255,6 +258,22 @@ Environment Variables:
         help='End date in YYYY-MM-DD format'
     )
     
+    # fetch-all-economic-indicators command
+    all_economic_parser = subparsers.add_parser(
+        'fetch-all-economic-indicators',
+        help='Fetch all available economic indicators at once'
+    )
+    all_economic_parser.add_argument(
+        '--from',
+        dest='from_date',
+        required=True,
+        help='Start date in YYYY-MM-DD format'
+    )
+    all_economic_parser.add_argument(
+        '--to',
+        dest='to_date',
+        help='End date in YYYY-MM-DD format (optional, defaults to today for auto-extension)'
+    )
     
     # load-price-csv command
     load_csv_parser = subparsers.add_parser(
@@ -485,6 +504,11 @@ def main() -> NoReturn:
         elif args.command == 'fetch-economic-indicator':
             exit_code = fetch_economic_indicator_command(
                 name=args.name,
+                from_date=args.from_date,
+                to_date=args.to_date
+            )
+        elif args.command == 'fetch-all-economic-indicators':
+            exit_code = fetch_all_economic_indicators_command(
                 from_date=args.from_date,
                 to_date=args.to_date
             )
