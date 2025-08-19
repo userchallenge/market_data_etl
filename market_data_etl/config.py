@@ -49,8 +49,10 @@ class APIConfig:
     """API configuration settings."""
     fred_api_key: Optional[str] = None
     eurostat_base_url: str = "https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data"
-    ecb_base_url: str = "https://sdw-wsrest.ecb.europa.eu/service/data"
+    ecb_base_url: str = "https://data-api.ecb.europa.eu/service/data"
     fred_base_url: str = "https://api.stlouisfed.org/fred"
+    request_timeout: int = 30  # seconds
+    default_format: str = "json"
     
     @classmethod
     def from_env(cls) -> "APIConfig":
@@ -59,7 +61,9 @@ class APIConfig:
             fred_api_key=os.getenv("FRED_API_KEY"),
             eurostat_base_url=os.getenv("EUROSTAT_BASE_URL", cls.eurostat_base_url),
             ecb_base_url=os.getenv("ECB_BASE_URL", cls.ecb_base_url),
-            fred_base_url=os.getenv("FRED_BASE_URL", cls.fred_base_url)
+            fred_base_url=os.getenv("FRED_BASE_URL", cls.fred_base_url),
+            request_timeout=int(os.getenv("API_REQUEST_TIMEOUT", "30")),
+            default_format=os.getenv("API_DEFAULT_FORMAT", "json")
         )
 
 
@@ -174,11 +178,14 @@ class Config:
         )
         
         api_endpoints = app_config.get('api_endpoints', {})
+        api_settings = app_config.get('api_settings', {})
         api_config = APIConfig(
             fred_api_key=os.getenv("FRED_API_KEY"),  # Always from env for security
             eurostat_base_url=os.getenv("EUROSTAT_BASE_URL", api_endpoints.get('eurostat', APIConfig.eurostat_base_url)),
             ecb_base_url=os.getenv("ECB_BASE_URL", api_endpoints.get('ecb', APIConfig.ecb_base_url)),
-            fred_base_url=os.getenv("FRED_BASE_URL", api_endpoints.get('fred', APIConfig.fred_base_url))
+            fred_base_url=os.getenv("FRED_BASE_URL", api_endpoints.get('fred', APIConfig.fred_base_url)),
+            request_timeout=int(os.getenv("API_REQUEST_TIMEOUT", str(api_settings.get('request_timeout', 30)))),
+            default_format=os.getenv("API_DEFAULT_FORMAT", api_settings.get('default_format', 'json'))
         )
         
         return cls(

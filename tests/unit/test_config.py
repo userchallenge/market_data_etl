@@ -258,8 +258,32 @@ class TestConfigurationIntegration:
     
     def test_config_used_in_fetchers(self):
         """Test that data fetchers use configuration correctly."""
-        # Test that fetchers use retry config, API endpoints from config
-        pass
+        from market_data_etl.config import config
+        
+        # Test that API endpoints are available
+        assert hasattr(config.api, 'eurostat_base_url')
+        assert hasattr(config.api, 'ecb_base_url') 
+        assert hasattr(config.api, 'fred_base_url')
+        assert hasattr(config.api, 'request_timeout')
+        
+        # Test that they have reasonable values
+        assert 'eurostat' in config.api.eurostat_base_url.lower()
+        assert 'ecb' in config.api.ecb_base_url.lower() 
+        assert 'fred' in config.api.fred_base_url.lower()
+        assert config.api.request_timeout > 0
+    
+    def test_api_endpoint_configuration(self):
+        """Test API endpoint configuration from YAML."""
+        from market_data_etl.config import config
+        
+        # Verify endpoints match expected format
+        assert config.api.eurostat_base_url.startswith('https://')
+        assert config.api.ecb_base_url.startswith('https://')
+        assert config.api.fred_base_url.startswith('https://')
+        
+        # Verify timeout is configurable
+        assert isinstance(config.api.request_timeout, int)
+        assert config.api.request_timeout >= 1  # At least 1 second
 
 
 # Fixtures for all tests

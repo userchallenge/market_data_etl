@@ -547,7 +547,7 @@ class EconomicDataFetcher(DataFetcher):
             to_year_month = self._to_year_month(to_date_used)
             
             url = (
-                f"https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data/{data_code}"
+                f"{config.api.eurostat_base_url}/{data_code}"
                 f"?geo=EU27_2020"
                 f"&sinceTimePeriod={from_year_month}"
                 f"&untilTimePeriod={to_year_month}"
@@ -555,7 +555,7 @@ class EconomicDataFetcher(DataFetcher):
             )
             
             try:
-                response = requests.get(url, timeout=30)
+                response = requests.get(url, timeout=config.api.request_timeout)
                 response.raise_for_status()
                 
                 json_data = response.json()
@@ -607,7 +607,7 @@ class EconomicDataFetcher(DataFetcher):
             to_year_month = self._to_year_month(to_date)
             
             url = (
-                f"https://data-api.ecb.europa.eu/service/data/{dataflow_ref}/{series_key}"
+                f"{config.api.ecb_base_url}/{dataflow_ref}/{series_key}"
                 f"?format=jsondata&startPeriod={from_year_month}"
                 f"&endPeriod={to_year_month}"
             )
@@ -615,7 +615,7 @@ class EconomicDataFetcher(DataFetcher):
             headers = {"Accept": "application/json"}
             
             try:
-                response = requests.get(url, headers=headers, timeout=30)
+                response = requests.get(url, headers=headers, timeout=config.api.request_timeout)
                 response.raise_for_status()
                 
                 json_data = response.json()
@@ -662,14 +662,14 @@ class EconomicDataFetcher(DataFetcher):
             self.logger.info(f"Fetching FRED data for series ID {series_id}, from {from_date} to {to_date}")
             
             url = (
-                f"https://api.stlouisfed.org/fred/series/observations?series_id={series_id}"
+                f"{config.api.fred_base_url}/series/observations?series_id={series_id}"
                 f"&api_key={api_key}"
                 f"&file_type=json&frequency=m"
                 f"&observation_start={from_date}&observation_end={to_date}"
             )
             
             try:
-                response = requests.get(url, timeout=30)
+                response = requests.get(url, timeout=config.api.request_timeout)
                 response.raise_for_status()
                 
                 json_data = response.json()

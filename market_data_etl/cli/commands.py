@@ -17,16 +17,12 @@ from ..database.manager import DatabaseManager
 from ..utils.logging import get_logger
 from ..utils.exceptions import YahooFinanceError, ValidationError, DatabaseError
 from ..utils.validation import validate_ticker, validate_date_string, validate_date_range, validate_years_parameter
+from ..utils.error_handlers import SUCCESS_EXIT_CODE, ERROR_EXIT_CODE
 from ..data.models import InstrumentType
 from ..data.fetchers import detect_instrument_type, detect_from_symbol_pattern
 import yfinance as yf
 
 logger = get_logger(__name__)
-
-
-# Constants
-SUCCESS_EXIT_CODE = 0
-ERROR_EXIT_CODE = 1
 
 # Status messages
 PERIOD_TYPE_ANNUAL = 'annual'

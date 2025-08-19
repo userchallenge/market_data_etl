@@ -30,7 +30,6 @@ from ..data.models import (
 
 # Constants
 DEFAULT_SUMMARY_YEARS = 5
-MAX_SUMMARY_YEARS = 20
 
 
 class DatabaseManager:
