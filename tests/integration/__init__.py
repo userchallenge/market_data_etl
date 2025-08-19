@@ -1,0 +1,1 @@
+"""Integration tests for market_data_etl."""

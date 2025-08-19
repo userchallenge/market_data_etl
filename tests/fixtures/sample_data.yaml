@@ -1,0 +1,51 @@
+# Sample test data for various tests
+sample_price_data:
+  - date: "2024-01-01"
+    open: 100.0
+    high: 105.0
+    low: 98.0
+    close: 103.0
+    adj_close: 103.0
+    volume: 1000000
+  - date: "2024-01-02"
+    open: 103.0
+    high: 107.0
+    low: 102.0
+    close: 106.0
+    adj_close: 106.0
+    volume: 1200000
+
+sample_instrument:
+  ticker_symbol: "TEST"
+  instrument_name: "Test Company"
+  instrument_type: "stock"
+  currency: "USD"
+  sector: "Technology"
+  industry: "Software"
+  country: "United States"
+
+sample_portfolio:
+  name: "Test Portfolio"
+  holdings: ["AAPL", "MSFT", "GOOGL"]
+
+sample_economic_data:
+  indicator_name: "test_inflation"
+  source: "test_source"
+  data_points:
+    - date: "2024-01-01"
+      value: 2.5
+    - date: "2024-02-01"
+      value: 2.7
+
+sample_yahoo_response:
+  info:
+    longName: "Apple Inc."
+    sector: "Technology"
+    industry: "Consumer Electronics"
+    country: "United States"
+    currency: "USD"
+    marketCap: 3000000000000
+    fullTimeEmployees: 150000
+  hist:
+    "2024-01-01": [100.0, 105.0, 98.0, 103.0, 103.0, 1000000]
+    "2024-01-02": [103.0, 107.0, 102.0, 106.0, 106.0, 1200000]

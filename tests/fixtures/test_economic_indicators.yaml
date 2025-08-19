@@ -1,0 +1,14 @@
+# Test economic indicators configuration
+indicators:
+  test_inflation_euro:
+    source: "eurostat"
+    source_identifier: "prc_hicp_test"
+    description: "Test Eurozone Inflation"
+  test_unemployment_us:
+    source: "fred"
+    source_identifier: "UNRATE_TEST"
+    description: "Test US Unemployment Rate"
+  test_interest_rate_ecb:
+    source: "ecb"
+    source_identifier: "FM.B.U2.EUR.TEST"
+    description: "Test ECB Interest Rate"

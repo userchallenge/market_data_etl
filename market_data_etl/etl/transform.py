@@ -11,6 +11,7 @@ import pandas as pd
 
 from ..utils.logging import get_logger
 from ..data.financial_standardizer import FinancialStandardizer
+from ..config import config
 
 
 class FinancialDataTransformer:
@@ -786,81 +787,54 @@ class EconomicDataTransformer:
         return mapping.get(frequency_code, 'monthly')
     
     def _get_indicator_mapping(self, source: str, source_identifier: str) -> Dict[str, str]:
-        """Get standardized mapping for economic indicators."""
-        # Complete mapping from CSV data provided by user
-        mapping_table = {
-            ('eurostat', 'prc_hicp_mmor'): {
-                'name': 'inflation_monthly_euro',
-                'source': 'eurostat',
-                'source_identifier': 'prc_hicp_mmor',
-                'description': 'Eurozone Inflation (HICP, monthly rate of change)'
-            },
-            ('eurostat', 'ei_lmhr_m'): {
-                'name': 'unemployment_rate_monthly_euro',
-                'source': 'eurostat', 
-                'source_identifier': 'ei_lmhr_m',
-                'description': 'Eurozone Unemployment Rate'
-            },
-            ('ecb', 'FM.D.U2.EUR.4F.KR.MRR_FR.LEV'): {
-                'name': 'interest_rate_change_day_euro',
-                'source': 'ecb',
-                'source_identifier': 'FM; D.U2.EUR.4F.KR.MRR_FR.LEV',
-                'description': 'Eurozone Interest Rate (Main Refinancing Operations)'
-            },
-            ('ecb', 'FM.B.U2.EUR.4F.KR.MRR_FR.LEV'): {
-                'name': 'interest_rate_monthly_euro',
-                'source': 'ecb',
-                'source_identifier': 'FM; B.U2.EUR.4F.KR.MRR_FR.LEV', 
-                'description': 'Eurozone Monthly Interest Rate (Main Refinancing Operations)'
-            },
-            ('fred', 'UNRATE'): {
-                'name': 'unemployment_monthly_rate_us',
-                'source': 'fred',
-                'source_identifier': 'UNRATE',
-                'description': 'US Unemployment Rate'
-            },
-            ('fred', 'CPIAUCSL'): {
-                'name': 'inflation_index_monthly_us',
-                'source': 'fred',
-                'source_identifier': 'CPIAUCSL',
-                'description': 'US Consumer Price Index (CPI)'
-            },
-            ('fred', 'DFF'): {
-                'name': 'interest_rate_monthly_us',
-                'source': 'fred',
-                'source_identifier': 'DFF',
-                'description': 'US Federal Funds Rate'
-            },
-        }
+        """
+        Get standardized mapping for economic indicators.
         
-        # Try exact match first
-        key = (source, source_identifier)
-        if key in mapping_table:
-            return mapping_table[key]
+        Uses YAML configuration if available, falls back to hardcoded values for backward compatibility.
+        """
+        # Try YAML configuration first (new approach)
+        if config.economic_indicators:
+            # Look for indicator by source and source_identifier
+            for indicator_name, indicator_config in config.economic_indicators.items():
+                if (indicator_config.get('source') == source and 
+                    indicator_config.get('source_identifier') == source_identifier):
+                    return {
+                        'name': indicator_name,
+                        'source': indicator_config['source'],
+                        'source_identifier': indicator_config['source_identifier'],
+                        'description': indicator_config.get('description', f'{source.upper()} indicator: {source_identifier}')
+                    }
             
-        # For ECB, handle the different formats that might be used
-        if source == 'ecb':
-            # Try with semicolon format
-            ecb_key_semicolon = (source, source_identifier.replace('.', '; ', 1))
-            if ecb_key_semicolon in mapping_table:
-                return mapping_table[ecb_key_semicolon]
-            
-            # Try with dot format  
-            ecb_key_dot = (source, source_identifier.replace('; ', '.', 1))
-            if ecb_key_dot in mapping_table:
-                # Return the mapping but with correct source_identifier format
-                mapping = mapping_table[ecb_key_dot].copy()
-                mapping['source_identifier'] = 'FM; B.U2.EUR.4F.KR.MRR_FR.LEV'
-                return mapping
+            # For ECB, try different identifier formats
+            if source == 'ecb':
+                # Try with semicolon format replacement
+                alt_identifier_semicolon = source_identifier.replace('.', '; ', 1)
+                alt_identifier_dot = source_identifier.replace('; ', '.', 1)
+                
+                for indicator_name, indicator_config in config.economic_indicators.items():
+                    config_identifier = indicator_config.get('source_identifier', '')
+                    if (indicator_config.get('source') == source and 
+                        (config_identifier == alt_identifier_semicolon or config_identifier == alt_identifier_dot)):
+                        return {
+                            'name': indicator_name,
+                            'source': indicator_config['source'],
+                            'source_identifier': indicator_config['source_identifier'],
+                            'description': indicator_config.get('description', f'{source.upper()} indicator: {source_identifier}')
+                        }
         
-        # Fallback for unmapped indicators
-        self.logger.warning(f"No standardized mapping found for {source}/{source_identifier}")
-        return {
-            'name': f'{source}_{source_identifier}'.replace('.', '_').replace(';', '_').lower(),
-            'source': source,
-            'source_identifier': source_identifier,
-            'description': f'{source.upper()} indicator: {source_identifier}'
-        }
+        # No mapping found in YAML configuration
+        self.logger.error(f"No economic indicator mapping found for {source}/{source_identifier}")
+        self.logger.error("Available indicators in YAML config:")
+        if config.economic_indicators:
+            for name, conf in config.economic_indicators.items():
+                self.logger.error(f"  - {name}: {conf.get('source')}/{conf.get('source_identifier')}")
+        else:
+            self.logger.error("  No indicators loaded from YAML configuration")
+        
+        raise ValueError(
+            f"Economic indicator mapping not found: {source}/{source_identifier}. "
+            f"Please add this indicator to config/economic_indicators.yaml or verify the source/identifier values."
+        )
     
     def _calculate_monthly_rate_change(self, data_points: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """

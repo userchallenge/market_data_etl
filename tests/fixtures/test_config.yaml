@@ -1,0 +1,17 @@
+# Test configuration for pytest
+database:
+  path: ":memory:"  # In-memory database for tests
+  echo: false
+
+api_endpoints:
+  eurostat: "https://test-eurostat.api.com"
+  ecb: "https://test-ecb.api.com"
+  fred: "https://test-fred.api.com"
+
+retry:
+  max_retries: 3
+  initial_backoff: 0.5
+  backoff_multiplier: 1.5
+
+defaults:
+  default_timezone: "UTC"
