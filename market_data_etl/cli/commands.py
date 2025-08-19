@@ -577,14 +577,14 @@ def load_portfolio_command(file_path: str) -> int:
             return ERROR_EXIT_CODE
         
         # Validate required fields
-        required_fields = ['name', 'currency', 'created_date', 'holdings']
+        required_fields = ['name', 'holdings']
         for field in required_fields:
             if field not in portfolio_config:
                 print(f"ERROR: Missing required field in portfolio configuration: {field}")
                 return ERROR_EXIT_CODE
         
-        if not portfolio_config['holdings']:
-            print("ERROR: Portfolio must contain at least one holding")
+        if not portfolio_config['holdings'] or not isinstance(portfolio_config['holdings'], list):
+            print("ERROR: Portfolio must contain at least one ticker in holdings array")
             return ERROR_EXIT_CODE
         
         print(f"Loading portfolio configuration: {portfolio_config['name']}")
@@ -599,14 +599,12 @@ def load_portfolio_command(file_path: str) -> int:
         print(f"✅ Successfully loaded portfolio: {portfolio.name}")
         print(f"📊 Holdings: {len(portfolio_config['holdings'])} instruments")
         
-        # Show holdings breakdown
-        holdings_by_type = {}
-        for holding_info in portfolio_config['holdings'].values():
-            instrument_type = holding_info.get('type', 'stock')
-            holdings_by_type[instrument_type] = holdings_by_type.get(instrument_type, 0) + 1
-        
-        for instrument_type, count in holdings_by_type.items():
-            print(f"  • {instrument_type.title()}: {count}")
+        # Show tickers list
+        tickers = portfolio_config['holdings']
+        if len(tickers) <= 10:
+            print(f"Tickers: {', '.join(tickers)}")
+        else:
+            print(f"Tickers: {', '.join(tickers[:8])}, ... and {len(tickers)-8} more")
         
         return SUCCESS_EXIT_CODE
         
@@ -746,6 +744,9 @@ def fetch_portfolio_prices_command(
         # Track results and errors
         results = []
         errors = []
+        
+        # Portfolio prices don't override instrument type
+        manual_instrument_type = None
         
         for holding, instrument in holdings:
             ticker = instrument.ticker_symbol

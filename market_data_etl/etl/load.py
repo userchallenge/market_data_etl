@@ -104,11 +104,12 @@ class FinancialDataLoader:
                 self.logger.warning(f"No price data to load for {ticker}")
                 return loading_results
             
-            # Extract instrument type from transformed data
+            # Extract instrument type and info from transformed data
             instrument_type = transformed_price_data.get('instrument_type')
+            instrument_info = transformed_price_data.get('instrument_info', {})
             
             # Load price data to database
-            loaded_count = self._load_price_dataframe(ticker, transformed_df, instrument_type)
+            loaded_count = self._load_price_dataframe(ticker, transformed_df, instrument_type, instrument_info)
             loading_results['loaded_records'] = loaded_count
             
             self.logger.info(f"Successfully loaded {loaded_count} price records for {ticker}")
@@ -122,14 +123,14 @@ class FinancialDataLoader:
         return loading_results
     
     
-    def _load_price_dataframe(self, ticker: str, price_df: pd.DataFrame, instrument_type=None) -> int:
+    def _load_price_dataframe(self, ticker: str, price_df: pd.DataFrame, instrument_type=None, instrument_info=None) -> int:
         """Load price DataFrame into database using unified interface."""
         if price_df.empty:
             return 0
         
         try:
-            # Use DatabaseManager's unified store_price_data method with instrument type
-            loaded_count = self.db_manager.store_price_data(ticker, price_df, instrument_type)
+            # Use DatabaseManager's unified store_price_data method with instrument type and info
+            loaded_count = self.db_manager.store_price_data(ticker, price_df, instrument_type, instrument_info)
             return loaded_count
             
         except Exception as e:

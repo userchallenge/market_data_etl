@@ -220,10 +220,10 @@
       "fund_type": "equity",
       "country": "IE"
     },
-    "SE0000984180": {
+    "0P0000KSY0": {
       "name": "SEB Global Index - Lux (share class unspecified)",
       "isin": "LU0086884042",
-      "yahoo_ticker": null,
+      "yahoo_ticker": "0P0000KSY0",
       "type": "fund",
       "fund_type": "equity",
       "country": "LU"

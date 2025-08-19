@@ -1,0 +1,11 @@
+{
+  "name": "Complete Investment Portfolio",
+  "holdings": [
+    "AAPL",
+    "MSFT", 
+    "ESSITY-B.ST",
+    "^OMXS30",
+    "SEB-C.ST",
+    "COIN"
+  ]
+}

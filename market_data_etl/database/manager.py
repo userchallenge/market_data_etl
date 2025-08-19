@@ -210,7 +210,8 @@ class DatabaseManager:
         self, 
         ticker: str, 
         price_data: pd.DataFrame, 
-        instrument_type: Optional[InstrumentType] = None
+        instrument_type: Optional[InstrumentType] = None,
+        instrument_info: Optional[Dict[str, Any]] = None
     ) -> int:
         """
         Store price data in the database.
@@ -219,6 +220,7 @@ class DatabaseManager:
             ticker: Ticker symbol
             price_data: DataFrame with price data
             instrument_type: Optional instrument type (auto-detected)
+            instrument_info: Optional instrument information from Yahoo Finance
             
         Returns:
             Number of records inserted
@@ -229,7 +231,32 @@ class DatabaseManager:
         try:
             # Use detected instrument type if provided, otherwise default to STOCK
             final_instrument_type = instrument_type or InstrumentType.STOCK
-            instrument = self.get_or_create_instrument(ticker, instrument_type=final_instrument_type)
+            
+            # Transform raw Yahoo Finance info to expected format
+            transformed_info = None
+            if instrument_info:
+                transformed_info = {
+                    'instrument_name': instrument_info.get('longName', ''),
+                    'sector': instrument_info.get('sector', ''),
+                    'industry': instrument_info.get('industry', ''),
+                    'country': instrument_info.get('country', ''),
+                    'market_cap': instrument_info.get('marketCap'),
+                    'employees': instrument_info.get('fullTimeEmployees')
+                }
+            
+            # Extract currency from Yahoo Finance info
+            currency = 'USD'  # Default
+            if instrument_info:
+                yf_currency = instrument_info.get('currency') or instrument_info.get('financialCurrency')
+                if yf_currency and len(yf_currency) == 3:
+                    currency = yf_currency.upper()
+            
+            instrument = self.get_or_create_instrument(
+                ticker, 
+                currency=currency,
+                instrument_info=transformed_info,
+                instrument_type=final_instrument_type
+            )
             
             with self.get_session() as session:
                 # Refresh instrument in this session
@@ -1106,23 +1133,26 @@ class DatabaseManager:
                     portfolio.updated_at = datetime.utcnow()
                     self.logger.debug(f"Updated existing portfolio: {portfolio.name}")
                 else:
-                    # Create new portfolio
-                    created_date = datetime.strptime(
-                        portfolio_config['created_date'], 
-                        '%Y-%m-%d'
-                    ).date()
+                    # Create new portfolio with defaults for missing fields
+                    if 'created_date' in portfolio_config:
+                        created_date = datetime.strptime(
+                            portfolio_config['created_date'], 
+                            '%Y-%m-%d'
+                        ).date()
+                    else:
+                        created_date = datetime.now().date()
                     
                     portfolio = Portfolio(
                         name=portfolio_config['name'],
                         description=portfolio_config.get('description', ''),
-                        currency=portfolio_config['currency'],
+                        currency=portfolio_config.get('currency', 'USD'),  # Default currency
                         created_date=created_date
                     )
                     session.add(portfolio)
                     self.logger.debug(f"Created new portfolio: {portfolio.name}")
                 
-                # Process holdings
-                self._update_portfolio_holdings(session, portfolio, portfolio_config.get('holdings', {}))
+                # Process holdings - now expects list of tickers
+                self._update_portfolio_holdings(session, portfolio, portfolio_config.get('holdings', []))
                 
                 session.commit()
                 session.refresh(portfolio)
@@ -1132,66 +1162,36 @@ class DatabaseManager:
             self.logger.error(f"Error loading portfolio config: {e}", exc_info=True)
             raise DatabaseError(f"Failed to load portfolio from config") from e
     
-    def _update_portfolio_holdings(self, session: Session, portfolio: Portfolio, holdings_config: Dict[str, Any]):
-        """Update portfolio holdings from configuration."""
+    def _update_portfolio_holdings(self, session: Session, portfolio: Portfolio, holdings_list: List[str]):
+        """Update portfolio holdings from ticker list."""
         # Clear existing holdings
         session.query(PortfolioHolding).filter(
             PortfolioHolding.portfolio_id == portfolio.id
         ).delete()
         
-        # Add new holdings
-        for ticker, holding_info in holdings_config.items():
-            # Create or get instrument
-            isin = holding_info.get('isin')
-            yahoo_ticker = holding_info.get('yahoo_ticker')
-            instrument_type_str = holding_info.get('type', 'stock')
-            
-            # Map string to enum
-            if instrument_type_str == 'fund':
-                instrument_type = InstrumentType.FUND
-            elif instrument_type_str == 'etf':
-                instrument_type = InstrumentType.ETF
-            else:
-                instrument_type = InstrumentType.STOCK
-            
-            # Use yahoo_ticker if available, otherwise use the key (ticker)
-            effective_ticker = yahoo_ticker if yahoo_ticker else ticker
-            
-            instrument_info = {
-                'instrument_name': holding_info.get('name', ''),
-                'sector': holding_info.get('sector', ''),
-                'country': holding_info.get('country', ''),
-                'fund_type': holding_info.get('fund_type', '')
-            }
-            
-            # Find or create instrument within this session
+        # Add new holdings from ticker list
+        for ticker in holdings_list:
+            # Find or create minimal instrument record (will be populated later during price fetching)
             instrument = session.query(Instrument).filter(
-                (Instrument.ticker_symbol == effective_ticker) | 
-                (Instrument.isin == isin) if isin else (Instrument.ticker_symbol == effective_ticker)
+                Instrument.ticker_symbol == ticker
             ).first()
             
             if not instrument:
+                # Create minimal instrument record - details populated during price fetching
                 instrument = Instrument(
-                    ticker_symbol=effective_ticker,
-                    isin=isin,
-                    instrument_type=instrument_type,
-                    instrument_name=instrument_info.get('instrument_name', ''),
-                    sector=instrument_info.get('sector', ''),
-                    industry=instrument_info.get('industry', ''),
-                    country=instrument_info.get('country', ''),
-                    currency='USD',  # Default
-                    fund_type=instrument_info.get('fund_type')
+                    ticker_symbol=ticker,
+                    instrument_type=InstrumentType.STOCK,  # Default, will be updated during price fetch
+                    instrument_name='',  # Populated during price fetch
+                    currency='USD'  # Default, will be updated during price fetch
                 )
                 session.add(instrument)
                 session.flush()  # Get the ID but don't commit yet
             
-            # Create portfolio holding
+            # Create portfolio holding (no quantities - those come from transactions)
             holding = PortfolioHolding(
                 portfolio_id=portfolio.id,
                 instrument_id=instrument.id,
-                sector=holding_info.get('sector'),
-                fund_type=holding_info.get('fund_type'),
-                notes=f"Added from portfolio config: {holding_info.get('name', '')}"
+                notes=f"Added from portfolio config"
             )
             session.add(holding)
     
