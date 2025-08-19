@@ -201,6 +201,48 @@ def _forward_fill_to_today(self, session, indicator_db_id, api_data_points):
 
 **Status**: **COMPLETE** ✅ - Enhanced economic indicator system with auto-extension, bulk processing, and ECB mapping fixes successfully implemented and tested.
 
+### Step 16: Portfolio System Core Infrastructure and Database Schema Fixes
+
+**Date**: 2025-08-19  
+**Type**: Architecture  
+**Impact**: High
+
+### What Changed
+- Fixed corrupted instruments table missing PRIMARY KEY constraint causing "Portfolio has no holdings" errors
+- Implemented simplified portfolio JSON format requiring only 'name' and 'holdings' array
+- Enhanced ETL pipeline to populate instrument metadata from Yahoo Finance during price fetching
+- Established clean portfolio workflow: load-portfolio → fetch-portfolio-prices → load-transactions
+
+### Technical Details
+- **Files Modified**: 
+  - `/Users/cw/Python/market_data_etl/cli/commands.py` - Updated portfolio validation and display logic
+  - `/Users/cw/Python/market_data_etl/database/manager.py` - Enhanced portfolio loading and instrument data handling
+  - `/Users/cw/Python/market_data_etl/etl/load.py` - Updated ETL pipeline to pass instrument_info through all phases
+  - `/Users/cw/Python/market_data_etl/test_portfolio.json` - Created simplified test portfolio format
+
+- **New Components**: 
+  - Simplified portfolio JSON schema with streamlined metadata requirements
+  - Enhanced database manager methods for instrument data population
+  - Updated ETL pipeline with instrument_info parameter passing
+
+- **Architecture Impact**: 
+  - Resolved database schema corruption preventing portfolio operations
+  - Streamlined portfolio format reduces complexity while maintaining functionality
+  - Automatic instrument metadata population from Yahoo Finance during all price operations
+
+### Implementation Notes
+- **Database Schema Fix**: Fixed missing PRIMARY KEY constraint on instruments table that was causing portfolio_holdings queries to fail despite valid data existing
+- **Simplified Portfolio Format**: New format requires only 'name' and 'holdings' array with ticker symbols, removing complex metadata requirements that were causing validation errors
+- **ETL Enhancement**: Enhanced extract → transform → load pipeline to pass Yahoo Finance instrument_info (longName, marketCap, sector, industry, country) through all phases and update database during price fetching
+- **Field Mapping**: Added transformation layer to map Yahoo Finance response fields to database schema columns
+- **Workflow Pattern**: Established clean three-step workflow where load-portfolio is required, fetch-portfolio-prices populates instrument data, and load-transactions is optional
+
+### Testing Results
+- ✅ Successfully fixed "Portfolio has no holdings" error through database schema repair
+- ✅ Verified instrument metadata population from Yahoo Finance for both new (TSLA) and existing (AAPL) tickers  
+- ✅ Confirmed simplified portfolio JSON format works end-to-end with validation
+- ✅ Validated complete workflow: load-portfolio → fetch-portfolio-prices with automatic instrument data population
+
 ---
 
 *This document tracks technical implementation progress and architectural decisions for the market_data_etl package.*
