@@ -13,7 +13,7 @@ from ..utils.logging import setup_logging
 from ..config import config
 from .commands import (
     fetch_prices_command, 
- 
+    fetch_all_command,
     db_info_command,
     fetch_financial_statements_command,
     clear_database_command,
@@ -44,6 +44,9 @@ def create_parser() -> argparse.ArgumentParser:
         epilog="""
 Examples:
   %(prog)s fetch-prices --ticker AAPL --from 2024-01-01 --to 2024-01-31
+  %(prog)s fetch-prices --ticker AAPL --from 2024-01-01 --prices-only
+  %(prog)s fetch-all --dry-run
+  %(prog)s fetch-all --prices-only
   %(prog)s fetch-financial-statements --ticker AAPL
   %(prog)s fetch-economic-indicator --name unemployment_monthly_rate_us --from 2024-01-01 --to 2024-12-31
   %(prog)s fetch-economic-indicator --name inflation_monthly_euro --from 2024-01-01
@@ -116,6 +119,32 @@ Environment Variables:
         dest='instrument_type',
         choices=['stock', 'fund', 'etf', 'index', 'commodity', 'currency', 'cryptocurrency', 'unknown'],
         help='Manually specify instrument type (overrides auto-detection)'
+    )
+    prices_parser.add_argument(
+        '--prices-only',
+        action='store_true',
+        help='Fetch only price data, skip automatic financial statement fetching for stocks'
+    )
+    
+    # fetch-all command
+    fetch_all_parser = subparsers.add_parser(
+        'fetch-all',
+        help='Fetch all latest data (prices, economic indicators, and financial statements)'
+    )
+    fetch_all_parser.add_argument(
+        '--dry-run',
+        action='store_true',
+        help='Show what would be fetched without actually fetching data'
+    )
+    fetch_all_parser.add_argument(
+        '--prices-only',
+        action='store_true',
+        help='Fetch only price data for all instruments'
+    )
+    fetch_all_parser.add_argument(
+        '--economic-only',
+        action='store_true',
+        help='Fetch only economic indicators'
     )
     
     # fetch-financial-statements command
@@ -467,7 +496,14 @@ def main() -> NoReturn:
                 ticker=args.ticker,
                 from_date=args.from_date,
                 to_date=args.to_date,
-                instrument_type=getattr(args, 'instrument_type', None)
+                instrument_type=getattr(args, 'instrument_type', None),
+                prices_only=getattr(args, 'prices_only', False)
+            )
+        elif args.command == 'fetch-all':
+            exit_code = fetch_all_command(
+                dry_run=getattr(args, 'dry_run', False),
+                prices_only=getattr(args, 'prices_only', False),
+                economic_only=getattr(args, 'economic_only', False)
             )
         elif args.command == 'fetch-financial-statements':
             exit_code = fetch_financial_statements_command(

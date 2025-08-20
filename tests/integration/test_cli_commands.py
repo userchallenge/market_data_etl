@@ -54,6 +54,12 @@ class TestPriceCommands:
         mock_db_manager.return_value = mock_db_instance
         mock_db_instance.store_price_data.return_value = 10  # 10 records stored
         
+        # Mock instrument info for the enhanced fetch_prices_command behavior
+        mock_db_instance.get_instrument_info.return_value = {
+            'instrument_type': 'fund',  # Use fund to avoid automatic financial fetch
+            'instrument_id': 1
+        }
+        
         # Capture stdout
         captured_output = StringIO()
         

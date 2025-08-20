@@ -13,7 +13,7 @@ Designed for comprehensive financial analysis of global companies.
 from sqlalchemy import Column, Integer, String, Float, Date, DateTime, ForeignKey, Index, Text, Enum
 from sqlalchemy.orm import declarative_base
 from sqlalchemy.orm import relationship
-from datetime import datetime
+from datetime import datetime, timezone
 import enum
 
 Base = declarative_base()
@@ -71,8 +71,8 @@ class Instrument(Base):
     base_date = Column(Date)                 # When index started
     base_value = Column(Float)               # Starting value (e.g., 100)
     
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     
     # Relationships
     prices = relationship("Price", back_populates="instrument")
@@ -106,7 +106,7 @@ class Price(Base):
     close = Column(Float)
     adj_close = Column(Float)
     volume = Column(Integer)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     
     # Relationships
     instrument = relationship("Instrument", back_populates="prices")
@@ -170,7 +170,7 @@ class IncomeStatement(Base):
     ebitda = Column(Float)  # Calculated: Operating Income + Depreciation + Amortization
     depreciation_amortization = Column(Float)
     
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     
     # Relationships
     instrument = relationship("Instrument", back_populates="income_statements")
@@ -251,7 +251,7 @@ class BalanceSheet(Base):
     working_capital = Column(Float)  # Current assets - Current liabilities
     book_value_per_share = Column(Float)  # Total equity / Shares outstanding
     
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     
     # Relationships
     instrument = relationship("Instrument", back_populates="balance_sheets")
@@ -321,7 +321,7 @@ class CashFlow(Base):
     free_cash_flow = Column(Float)  # Operating CF - CapEx
     fcf_per_share = Column(Float)  # FCF / Shares outstanding
     
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     
     # Relationships
     instrument = relationship("Instrument", back_populates="cash_flows")
@@ -388,7 +388,7 @@ class FinancialRatio(Base):
     net_income_growth_yoy = Column(Float)
     eps_growth_yoy = Column(Float)
     
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     
     # Relationships
     instrument = relationship("Instrument", back_populates="financial_ratios")
@@ -414,8 +414,8 @@ class Portfolio(Base):
     description = Column(Text)
     currency = Column(String(10), nullable=False)  # Base currency for portfolio
     created_date = Column(Date, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     
     # Relationships
     holdings = relationship("PortfolioHolding", back_populates="portfolio")
@@ -437,7 +437,7 @@ class PortfolioHolding(Base):
     sector = Column(String(100))  # Can override company sector for portfolio-specific categorization
     fund_type = Column(String(50))  # For funds: equity, bond, mixed, etc.
     notes = Column(Text)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     
     # Relationships
     portfolio = relationship("Portfolio", back_populates="holdings")
@@ -478,7 +478,7 @@ class Transaction(Base):
     # Calculated Fields
     total_amount = Column(Float)  # quantity * price_per_unit + fees (for buys) or - fees (for sells)
     
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     
     # Relationships
     portfolio = relationship("Portfolio", back_populates="transactions")
@@ -528,8 +528,8 @@ class EconomicIndicator(Base):
     description = Column(String(200), nullable=False)  # human-readable description
     unit = Column(String(50))
     frequency = Column(Enum(Frequency), nullable=False, default=Frequency.MONTHLY)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     
     # Relationships
     data_points = relationship("EconomicIndicatorData", back_populates="indicator")
@@ -548,7 +548,7 @@ class EconomicIndicatorData(Base):
     indicator_id = Column(Integer, ForeignKey('economic_indicators.id'), nullable=False)
     date = Column(Date, nullable=False, index=True)
     value = Column(Float, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     
     # Relationships
     indicator = relationship("EconomicIndicator", back_populates="data_points")
@@ -574,7 +574,7 @@ class Threshold(Base):
     category = Column(Enum(ThresholdCategory), nullable=False)
     min_value = Column(Float)
     max_value = Column(Float)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     
     # Relationships
     indicator = relationship("EconomicIndicator", back_populates="thresholds")
@@ -625,8 +625,8 @@ class AlignedDailyData(Base):
     
     # Metadata
     trading_calendar = Column(String(10), nullable=False)  # Exchange calendar used (US, STO, LSE, etc.)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     
     # Relationships
     instrument = relationship("Instrument")

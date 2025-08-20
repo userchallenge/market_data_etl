@@ -98,7 +98,8 @@ def fetch_prices_command(
     ticker: str,
     from_date: str,
     to_date: Optional[str] = None,
-    instrument_type: Optional[str] = None
+    instrument_type: Optional[str] = None,
+    prices_only: bool = False
 ) -> int:
     """
     Handle fetch-prices command using proper ETL pattern.
@@ -108,6 +109,7 @@ def fetch_prices_command(
         from_date: Start date in YYYY-MM-DD format
         to_date: End date in YYYY-MM-DD format (optional)
         instrument_type: Manual instrument type override (optional)
+        prices_only: Only fetch price data, skip automatic financial statements (optional)
         
     Returns:
         Exit code (0 for success, 1 for error)
@@ -154,12 +156,38 @@ def fetch_prices_command(
         # Report results
         if etl_results['status'] == 'completed':
             loaded_records = etl_results['phases']['load']['loaded_records']
-            print(f"\n✅ ETL Pipeline completed successfully!")
-            print(f"📊 Pipeline Summary:")
+            print(f"\n✅ Price ETL Pipeline completed successfully!")
+            print(f"📊 Price Pipeline Summary:")
             print(f"  • Extract: {etl_results['phases']['extract']['shape']} records")
             print(f"  • Transform: {etl_results['phases']['transform']['record_count']} records")
             print(f"  • Load: {loaded_records} records stored")
-            print(f"Operation completed successfully.")
+            
+            # Automatically fetch financial statements for stocks (unless prices_only is True)
+            if not prices_only:
+                # Get instrument info to check if it's a stock
+                db = DatabaseManager()
+                instrument_info = db.get_instrument_info(ticker)
+                
+                if instrument_info and instrument_info.get('instrument_type'):
+                    instrument_type_enum = InstrumentType(instrument_info['instrument_type'])
+                    
+                    if should_fetch_fundamentals(instrument_type_enum):
+                        print(f"\n📊 Automatically fetching financial statements for {ticker} (stock)...")
+                        
+                        fin_result = fetch_financial_statements_command(ticker=ticker, quarterly=True)
+                        
+                        if fin_result == SUCCESS_EXIT_CODE:
+                            print(f"✅ Financial statements updated successfully")
+                        else:
+                            print(f"⚠️  Financial statements update failed, but price data was successful")
+                    else:
+                        print(f"\n📝 Skipping financial statements for {ticker} ({instrument_type_enum.value}) - not applicable")
+                else:
+                    print(f"\n⚠️  Could not determine instrument type for automatic financial data fetch")
+            else:
+                print(f"\n📝 Skipping automatic financial statements (--prices-only flag used)")
+            
+            print(f"\nOperation completed successfully.")
         else:
             print(f"ERROR: ETL pipeline failed - {etl_results.get('error', 'Unknown error')}")
             return ERROR_EXIT_CODE
@@ -2159,3 +2187,203 @@ def _export_aligned_data_csv(aligned_df, ticker: str) -> None:
     
     print(f"✅ Exported {len(aligned_df)} aligned records to: {filename}")
     print(f"📁 File location: {os.path.abspath(filename)}")
+
+
+# =============================================================================
+# FETCH-ALL COMMAND - Update all data from latest dates
+# =============================================================================
+
+def fetch_all_command(
+    dry_run: bool = False,
+    prices_only: bool = False,
+    economic_only: bool = False
+) -> int:
+    """
+    Handle fetch-all command to update all data from latest dates to today.
+    
+    Args:
+        dry_run: Show what would be updated without actually fetching
+        prices_only: Only update price data
+        economic_only: Only update economic data
+        
+    Returns:
+        Exit code (0 for success, 1 for error)
+    """
+    try:
+        from datetime import date, timedelta
+        
+        db = DatabaseManager()
+        today = date.today()
+        
+        print("🔄 Fetch-All: Updating all data from latest dates to today")
+        print(f"📅 Target date: {today}")
+        print()
+        
+        # Track overall results
+        total_operations = 0
+        successful_operations = 0
+        failed_operations = []
+        
+        # =============================================================================
+        # 1. UPDATE PRICE DATA FOR ALL INSTRUMENTS
+        # =============================================================================
+        
+        if not economic_only:
+            print("📈 UPDATING PRICE DATA")
+            print("=" * 50)
+            
+            # Get all instruments
+            instruments = db.get_all_instruments_info()
+            print(f"Found {len(instruments)} instruments in database")
+            
+            for instrument in instruments:
+                ticker = instrument['ticker_symbol']
+                total_operations += 1
+                
+                try:
+                    # Get latest price date
+                    date_range = db.get_price_date_range(ticker)
+                    
+                    if date_range is None:
+                        print(f"⚠️  {ticker}: No existing price data - skipping (use fetch-prices first)")
+                        continue
+                        
+                    min_date, max_date = date_range
+                    next_date = max_date + timedelta(days=1)
+                    
+                    if next_date > today:
+                        print(f"✅ {ticker}: Already up to date (latest: {max_date})")
+                        successful_operations += 1
+                        continue
+                    
+                    if dry_run:
+                        print(f"📋 {ticker}: Would fetch prices from {next_date} to {today}")
+                        successful_operations += 1
+                        continue
+                    
+                    print(f"🔄 {ticker}: Fetching prices from {next_date} to {today}")
+                    
+                    # Call existing fetch_prices_command
+                    result = fetch_prices_command(
+                        ticker=ticker,
+                        from_date=next_date.strftime('%Y-%m-%d'),
+                        to_date=today.strftime('%Y-%m-%d')
+                    )
+                    
+                    if result == SUCCESS_EXIT_CODE:
+                        print(f"✅ {ticker}: Price update successful")
+                        successful_operations += 1
+                        
+                        # Also update financial data for stocks
+                        if not prices_only and instrument['instrument_type'] == 'stock':
+                            print(f"📊 {ticker}: Updating financial statements...")
+                            fin_result = fetch_financial_statements_command(ticker=ticker, quarterly=True)
+                            if fin_result == SUCCESS_EXIT_CODE:
+                                print(f"✅ {ticker}: Financial statements updated")
+                            else:
+                                print(f"⚠️  {ticker}: Financial statements update failed")
+                    else:
+                        failed_operations.append(f"{ticker} (prices)")
+                        print(f"❌ {ticker}: Price update failed")
+                        
+                except Exception as e:
+                    failed_operations.append(f"{ticker} (prices): {str(e)}")
+                    print(f"❌ {ticker}: Error - {str(e)}")
+            
+            print()
+        
+        # =============================================================================
+        # 2. UPDATE ECONOMIC INDICATORS
+        # =============================================================================
+        
+        if not prices_only:
+            print("📊 UPDATING ECONOMIC INDICATORS")
+            print("=" * 50)
+            
+            # Get all economic indicators
+            indicators = db.get_all_economic_indicators()
+            print(f"Found {len(indicators)} economic indicators in database")
+            
+            for indicator in indicators:
+                indicator_name = indicator['name']
+                indicator_id = indicator['id']
+                total_operations += 1
+                
+                try:
+                    # Get latest economic data date
+                    latest_date = db.get_latest_economic_indicator_date(indicator_id)
+                    
+                    if latest_date is None:
+                        print(f"⚠️  {indicator_name}: No existing data - skipping")
+                        continue
+                    
+                    next_date = latest_date + timedelta(days=1)
+                    
+                    if next_date > today:
+                        print(f"✅ {indicator_name}: Already up to date (latest: {latest_date})")
+                        successful_operations += 1
+                        continue
+                    
+                    if dry_run:
+                        print(f"📋 {indicator_name}: Would fetch from {next_date} to {today}")
+                        successful_operations += 1
+                        continue
+                    
+                    print(f"🔄 {indicator_name}: Fetching from {next_date} to {today}")
+                    
+                    # Call existing fetch_economic_indicator_command
+                    result = fetch_economic_indicator_command(
+                        name=indicator_name,
+                        from_date=next_date.strftime('%Y-%m-%d'),
+                        to_date=today.strftime('%Y-%m-%d')
+                    )
+                    
+                    if result == SUCCESS_EXIT_CODE:
+                        print(f"✅ {indicator_name}: Update successful")
+                        successful_operations += 1
+                    else:
+                        failed_operations.append(f"{indicator_name} (economic)")
+                        print(f"❌ {indicator_name}: Update failed")
+                        
+                except Exception as e:
+                    failed_operations.append(f"{indicator_name} (economic): {str(e)}")
+                    print(f"❌ {indicator_name}: Error - {str(e)}")
+            
+            print()
+        
+        # =============================================================================
+        # SUMMARY REPORT
+        # =============================================================================
+        
+        print("📋 FETCH-ALL SUMMARY")
+        print("=" * 50)
+        print(f"📊 Total operations: {total_operations}")
+        print(f"✅ Successful: {successful_operations}")
+        print(f"❌ Failed: {len(failed_operations)}")
+        
+        if failed_operations:
+            print(f"\n❌ Failed operations:")
+            for failure in failed_operations:
+                print(f"  • {failure}")
+        
+        success_rate = (successful_operations / total_operations * 100) if total_operations > 0 else 0
+        print(f"\n📈 Success rate: {success_rate:.1f}%")
+        
+        if dry_run:
+            print("\n📋 This was a dry run - no data was actually fetched")
+        elif len(failed_operations) == 0:
+            print("\n🎉 All updates completed successfully!")
+        elif success_rate >= 80:
+            print("\n✅ Most updates completed successfully")
+        else:
+            print("\n⚠️  Many updates failed - check individual error messages above")
+        
+        # Return success if at least 80% succeeded, or if it was just a dry run
+        if dry_run or success_rate >= 80:
+            return SUCCESS_EXIT_CODE
+        else:
+            return ERROR_EXIT_CODE
+            
+    except Exception as e:
+        print(f"ERROR: Fetch-all command failed: {e}")
+        return ERROR_EXIT_CODE

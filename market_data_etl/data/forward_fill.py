@@ -7,7 +7,7 @@ trading-calendar aligned data for unified analysis.
 """
 
 from typing import Dict, List, Any, Optional
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 import pandas as pd
 
 from ..utils.logging import get_logger
@@ -213,8 +213,8 @@ class ForwardFillTransformer:
                 'date': trading_date,
                 'instrument_id': instrument_id,
                 'trading_calendar': trading_calendar,
-                'created_at': datetime.utcnow(),
-                'updated_at': datetime.utcnow()
+                'created_at': datetime.now(timezone.utc),
+                'updated_at': datetime.now(timezone.utc)
             }
             
             # Add price data (if available)

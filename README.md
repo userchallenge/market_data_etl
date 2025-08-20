@@ -24,14 +24,16 @@ pip install -e .
 
 ## Data Types
 
-- **Price Data**: OHLC, volume, adjusted close
+- **Price Data**: OHLC, volume, adjusted close from Yahoo Finance
 - **Fundamental Data**: Financial statements, company info, analyst data
-- **Economic Data**: Indicators from Eurostat, ECB, FRED
-- **Portfolio Data**: Holdings and transactions
-- **Data Alignment**: Combine price and economic data for analysis
+- **Economic Data**: Indicators from Eurostat, ECB, FRED with automated updates
+- **Portfolio Data**: Holdings and transactions with performance tracking
+- **Data Alignment**: Combine price and economic data on trading calendars
+- **Batch Operations**: Efficient updates of all data types from latest dates
 
 ## CLI Commands
 
+**Batch Operations**: `fetch-all` (update all data from latest dates)
 **Price Data**: `fetch-prices`, `load-price-csv`, `generate-price-csv-template`
 **Financial Data**: `fetch-financial-statements`, `financial-summary`, `fetch-fundamentals`
 **Economic Data**: `fetch-economic`, `economic-info`
@@ -40,17 +42,31 @@ pip install -e .
 **Database & Utility**: `db-info`, `clear-database`, `update-instrument-types`
 
 ```bash
-# Examples
-market-data-etl fetch-prices --ticker AAPL --from 2024-01-01
+# Batch Operations - Update all data efficiently
+market-data-etl fetch-all --dry-run                    # Preview what would be updated
+market-data-etl fetch-all                              # Update all data from latest dates
+market-data-etl fetch-all --prices-only                # Update only price data
+market-data-etl fetch-all --economic-only              # Update only economic indicators
+
+# Price Data - Enhanced with automatic financial data
+market-data-etl fetch-prices --ticker AAPL --from 2024-01-01                    # Prices + financials
+market-data-etl fetch-prices --ticker AAPL --from 2024-01-01 --prices-only     # Prices only
+market-data-etl fetch-financial-statements --ticker AAPL
+
+# Economic Data - From multiple sources
 market-data-etl fetch-economic --source fred --indicator UNRATE --from 2024-01-01 --to 2024-12-31  # Uses FRED_API_KEY env var
 market-data-etl fetch-economic --source eurostat --indicator prc_hicp_mmor --from 2024-01-01
 market-data-etl economic-info --indicator unemployment_monthly_rate_us
 
-# Data Alignment Examples
+# Data Alignment - Combine price and economic data
 market-data-etl align-data --ticker AAPL --economic-indicator inflation_monthly_us
 market-data-etl align-data --ticker MSFT --economic-indicator unemployment_monthly_rate_us --from 2024-01-01 --method forward_fill
 market-data-etl alignment-info  # Show system information
 market-data-etl alignment-pairs --limit 10  # Show available data combinations
+
+# Portfolio Management
+market-data-etl load-portfolio --file my_portfolio.json
+market-data-etl fetch-portfolio-prices --portfolio "My Portfolio" --from 2024-01-01
 
 market-data-etl --help  # Show all commands
 ```

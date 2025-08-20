@@ -7,7 +7,8 @@ ffill ska bort
 
 lägg till "hämta allt" för en ticker
 
-I want a new CLI-command that 
+I want a functionality update with a fetch-all-command that fetches all latest price data (for all instruments), economic indicators and financial statements based on the latest date for each in the database. The purpose of this command is to easily keep the data updated. 
+I also want an updated fetch-prices function for a ticker to also fetch financial data everytime for that ticker. Please think about this and create a plan that reuses as much functionality as possible and works in a modular way.
 
 Replace all print-statements with logging according to industry best practice
 Remove all warnings for this

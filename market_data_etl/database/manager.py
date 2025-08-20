@@ -214,6 +214,68 @@ class DatabaseManager:
             
             return result
     
+    def get_latest_economic_indicator_date(self, indicator_id: int) -> Optional[date]:
+        """
+        Get the latest date for a specific economic indicator.
+        
+        Args:
+            indicator_id: Database ID of the economic indicator
+            
+        Returns:
+            Latest date or None if no data exists
+        """
+        with self.get_session() as session:
+            from sqlalchemy import func
+            result = session.query(
+                func.max(EconomicIndicatorData.date)
+            ).filter(EconomicIndicatorData.indicator_id == indicator_id).first()
+            
+            if result[0] is None:
+                return None
+            
+            return result[0]
+    
+    def get_latest_financial_statements_date(self, ticker: str) -> Optional[date]:
+        """
+        Get the latest date for financial statements for a ticker.
+        
+        Args:
+            ticker: Stock ticker symbol
+            
+        Returns:
+            Latest date across all financial statement types or None if no data exists
+        """
+        with self.get_session() as session:
+            instrument = session.query(Instrument).filter(
+                Instrument.ticker_symbol == ticker
+            ).first()
+            
+            if not instrument:
+                return None
+            
+            from sqlalchemy import func
+            
+            # Get latest dates from all financial statement tables
+            latest_income = session.query(
+                func.max(IncomeStatement.period_ending)
+            ).filter(IncomeStatement.instrument_id == instrument.id).scalar()
+            
+            latest_balance = session.query(
+                func.max(BalanceSheet.period_ending)
+            ).filter(BalanceSheet.instrument_id == instrument.id).scalar()
+            
+            latest_cashflow = session.query(
+                func.max(CashFlow.period_ending)
+            ).filter(CashFlow.instrument_id == instrument.id).scalar()
+            
+            # Return the latest date across all statement types
+            dates = [d for d in [latest_income, latest_balance, latest_cashflow] if d is not None]
+            
+            if not dates:
+                return None
+            
+            return max(dates)
+    
     def store_price_data(
         self, 
         ticker: str, 
