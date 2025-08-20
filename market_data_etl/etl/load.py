@@ -310,13 +310,12 @@ class EconomicDataLoader:
         self.logger = get_logger(__name__)
         self.db_manager = db_manager or DatabaseManager()
     
-    def load_economic_data(self, transformed_data: Dict[str, Any], auto_extend_to_today: bool = False) -> Dict[str, Any]:
+    def load_economic_data(self, transformed_data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Load transformed economic data into database.
         
         Args:
             transformed_data: Transformed data from EconomicDataTransformer
-            auto_extend_to_today: Whether to forward-fill data to today's date when no end date specified
             
         Returns:
             Dictionary with loading results and statistics
@@ -339,7 +338,7 @@ class EconomicDataLoader:
         
         try:
             # Store indicator and data points using database manager
-            results = self.db_manager.store_economic_data(transformed_data, auto_extend_to_today)
+            results = self.db_manager.store_economic_data(transformed_data)
             
             loading_results['loaded_records'] = results
             
@@ -376,7 +375,7 @@ class EconomicETLOrchestrator:
         self.transformer = EconomicDataTransformer()
         self.loader = EconomicDataLoader(self.db_manager)
     
-    def run_eurostat_etl(self, data_code: str, from_date: str, to_date: str = None, auto_extend_to_today: bool = False) -> Dict[str, Any]:
+    def run_eurostat_etl(self, data_code: str, from_date: str, to_date: str = None) -> Dict[str, Any]:
         """
         Run complete Eurostat data ETL pipeline.
         
@@ -384,7 +383,6 @@ class EconomicETLOrchestrator:
             data_code: Eurostat dataset code
             from_date: Start date for data
             to_date: End date for data (defaults to today if not specified)
-            auto_extend_to_today: Whether to forward-fill data to today when no to_date specified
             
         Returns:
             ETL results with statistics from each phase
@@ -418,7 +416,7 @@ class EconomicETLOrchestrator:
             
             # LOAD phase
             self.logger.info(f"Load phase: loading Eurostat data for {data_code}")
-            load_results = self.loader.load_economic_data(transformed_data, auto_extend_to_today)
+            load_results = self.loader.load_economic_data(transformed_data)
             etl_results['phases']['load'] = {
                 'status': 'completed',
                 'loaded_records': load_results.get('loaded_records', {}),
@@ -445,8 +443,7 @@ class EconomicETLOrchestrator:
         dataflow_ref: str, 
         series_key: str, 
         from_date: str, 
-        to_date: str,
-        auto_extend_to_today: bool = False
+        to_date: str
     ) -> Dict[str, Any]:
         """
         Run complete ECB data ETL pipeline.
@@ -456,7 +453,6 @@ class EconomicETLOrchestrator:
             series_key: ECB series key
             from_date: Start date for data
             to_date: End date for data
-            auto_extend_to_today: Whether to forward-fill data to today when no end date specified
             
         Returns:
             ETL results with statistics from each phase
@@ -491,7 +487,7 @@ class EconomicETLOrchestrator:
             
             # LOAD phase
             self.logger.info(f"Load phase: loading ECB data for {indicator_id}")
-            load_results = self.loader.load_economic_data(transformed_data, auto_extend_to_today)
+            load_results = self.loader.load_economic_data(transformed_data)
             etl_results['phases']['load'] = {
                 'status': 'completed',
                 'loaded_records': load_results.get('loaded_records', {}),
@@ -518,8 +514,7 @@ class EconomicETLOrchestrator:
         series_id: str, 
         api_key: str, 
         from_date: str, 
-        to_date: str,
-        auto_extend_to_today: bool = False
+        to_date: str
     ) -> Dict[str, Any]:
         """
         Run complete FRED data ETL pipeline.
@@ -529,7 +524,6 @@ class EconomicETLOrchestrator:
             api_key: FRED API key
             from_date: Start date for data
             to_date: End date for data
-            auto_extend_to_today: Whether to forward-fill data to today when no end date specified
             
         Returns:
             ETL results with statistics from each phase
@@ -578,7 +572,7 @@ class EconomicETLOrchestrator:
                 # Load multiple indicators
                 all_load_results = []
                 for data in transformed_data:
-                    load_result = self.loader.load_economic_data(data, auto_extend_to_today)
+                    load_result = self.loader.load_economic_data(data)
                     all_load_results.append(load_result)
                 
                 # Combine results
@@ -589,7 +583,7 @@ class EconomicETLOrchestrator:
                     'loading_timestamp': all_load_results[0].get('loading_timestamp') if all_load_results else None
                 }
             else:
-                load_results = self.loader.load_economic_data(transformed_data, auto_extend_to_today)
+                load_results = self.loader.load_economic_data(transformed_data)
             etl_results['phases']['load'] = {
                 'status': 'completed',
                 'loaded_records': load_results.get('loaded_records', {}),

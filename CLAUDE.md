@@ -483,3 +483,4 @@ When in doubt:
 5. Update documentation
 
 Remember: Consistency is more important than perfection. Follow established patterns even if you think there might be a "better" way.
+- Always check the actual CLI interface when providing examples

@@ -1046,7 +1046,7 @@ def fetch_economic_indicator_command(
         
         source, source_identifier, description = mapping[name]
         
-        # Note: ECB/FRED now support auto-extension to today's date when no --to specified
+        # Note: All economic data sources fetch data through specified date range
         
         # Get FRED API key if needed
         api_key = None
@@ -1059,21 +1059,19 @@ def fetch_economic_indicator_command(
         print(f"Fetching {description}")
         
         # Track if to_date was user-specified vs auto-extended
-        auto_extend_to_today = False
         if not to_date:
             to_date = date.today().strftime('%Y-%m-%d')
-            auto_extend_to_today = True
             print(f"   Fetching through: {to_date} (default: today)")
         
-        # Run ETL pipeline with auto-extend flag
+        # Run ETL pipeline
         etl = EconomicETLOrchestrator()
         if source == 'eurostat':
-            results = etl.run_eurostat_etl(source_identifier, from_date, to_date, auto_extend_to_today)
+            results = etl.run_eurostat_etl(source_identifier, from_date, to_date)
         elif source == 'ecb':
             parts = source_identifier.split('.', 1)
-            results = etl.run_ecb_etl(parts[0], parts[1], from_date, to_date, auto_extend_to_today)
+            results = etl.run_ecb_etl(parts[0], parts[1], from_date, to_date)
         elif source == 'fred':
-            results = etl.run_fred_etl(source_identifier, api_key, from_date, to_date, auto_extend_to_today)
+            results = etl.run_fred_etl(source_identifier, api_key, from_date, to_date)
         
         # Report results
         if results['status'] == 'completed':
