@@ -126,12 +126,12 @@ def fetch_prices_command(
         if instrument_type:
             try:
                 manual_instrument_type = InstrumentType(instrument_type)
-                print(f"🔧 Manual override: Setting instrument type to {manual_instrument_type.value}")
+                logger.info(f"Manual override: Setting instrument type to {manual_instrument_type.value}")
             except ValueError:
-                print(f"ERROR: Invalid instrument type '{instrument_type}'. Valid options: {[t.value for t in InstrumentType]}")
+                logger.error(f"Invalid instrument type '{instrument_type}'. Valid options: {[t.value for t in InstrumentType]}")
                 return ERROR_EXIT_CODE
         
-        print(f"Running price ETL pipeline for {ticker} from {start_date} to {end_date}...")
+        logger.info(f"Starting price fetch for {ticker} from {start_date} to {end_date}")
         
         # Initialize ETL orchestrator
         etl = ETLOrchestrator()
@@ -142,10 +142,10 @@ def fetch_prices_command(
         missing_dates = find_missing_dates_in_range(existing_dates, start_date, end_date)
         
         if not missing_dates:
-            print("Database already contains data for the full range. Nothing to fetch.")
+            logger.info("Database already contains data for the full range. Nothing to fetch.")
             return SUCCESS_EXIT_CODE
         
-        print(f"Found {len(existing_dates)} days already in database, processing {len(missing_dates)} missing days...")
+        logger.info(f"Processing {len(missing_dates)} missing days for {ticker}")
         
         # Run ETL pipeline
         earliest_missing = min(missing_dates)
@@ -156,7 +156,8 @@ def fetch_prices_command(
         # Report results
         if etl_results['status'] == 'completed':
             loaded_records = etl_results['phases']['load']['loaded_records']
-            print(f"\n✅ Price ETL Pipeline completed successfully!")
+            logger.info(f"Fetched {loaded_records} prices for {ticker}, stored {loaded_records}")
+            print(f"\n✅ Price ETL Pipeline completed successfully for {ticker}!")
             print(f"📊 Price Pipeline Summary:")
             print(f"  • Extract: {etl_results['phases']['extract']['shape']} records")
             print(f"  • Transform: {etl_results['phases']['transform']['record_count']} records")
@@ -172,38 +173,36 @@ def fetch_prices_command(
                     instrument_type_enum = InstrumentType(instrument_info['instrument_type'])
                     
                     if should_fetch_fundamentals(instrument_type_enum):
-                        print(f"\n📊 Automatically fetching financial statements for {ticker} (stock)...")
+                        logger.info(f"Fetching financial statements for {ticker}")
                         
                         fin_result = fetch_financial_statements_command(ticker=ticker, quarterly=True)
                         
                         if fin_result == SUCCESS_EXIT_CODE:
-                            print(f"✅ Financial statements updated successfully")
+                            logger.info(f"Updated financial statements for {ticker}")
                         else:
-                            print(f"⚠️  Financial statements update failed, but price data was successful")
+                            logger.warning(f"Financial statements update failed for {ticker}, but price data was successful")
                     else:
-                        print(f"\n📝 Skipping financial statements for {ticker} ({instrument_type_enum.value}) - not applicable")
+                        logger.info(f"Skipping financial statements for {ticker} ({instrument_type_enum.value}) - not applicable")
                 else:
-                    print(f"\n⚠️  Could not determine instrument type for automatic financial data fetch")
+                    logger.warning(f"Could not determine instrument type for automatic financial data fetch")
             else:
-                print(f"\n📝 Skipping automatic financial statements (--prices-only flag used)")
+                logger.info(f"Skipping automatic financial statements (--prices-only flag used)")
             
-            print(f"\nOperation completed successfully.")
+            logger.info(f"Completed price fetch for {ticker}")
         else:
-            print(f"ERROR: ETL pipeline failed - {etl_results.get('error', 'Unknown error')}")
+            logger.error(f"ETL pipeline failed - {etl_results.get('error', 'Unknown error')}")
             return ERROR_EXIT_CODE
         
         return SUCCESS_EXIT_CODE
         
     except ValidationError as e:
-        print(f"ERROR: {e}")
+        logger.error(f"Validation error: {e}")
         return ERROR_EXIT_CODE
     except YahooFinanceError as e:
-        print(f"ERROR: Failed to fetch prices for {ticker} from Yahoo Finance.")
-        print(str(e))
+        logger.error(f"Failed to fetch prices for {ticker} from Yahoo Finance: {e}")
         return ERROR_EXIT_CODE
     except Exception as e:
         logger.error(f"Unexpected error in fetch_prices_command: {e}", exc_info=True)
-        print(f"ERROR: Unexpected error: {e}")
         return ERROR_EXIT_CODE
 
 
@@ -217,10 +216,10 @@ def fetch_fundamentals_command(ticker: str) -> int:
     Returns:
         Exit code (0 for success, 1 for error)
     """
-    print(f"⚠️  Legacy command detected!")
-    print(f"The 'fetch-fundamentals' command is deprecated.")
-    print(f"For structured financial analysis, use: fetch-financial-statements --ticker {ticker}")
-    print(f"Automatically redirecting to the new command...\n")
+    logger.warning(f"Legacy command detected")
+    logger.warning(f"The 'fetch-fundamentals' command is deprecated")
+    logger.info(f"For structured financial analysis, use: fetch-financial-statements --ticker {ticker}")
+    logger.info(f"Automatically redirecting to the new command")
     
     # Redirect to the proper financial statements command
     return fetch_financial_statements_command(ticker, quarterly=True)
@@ -249,6 +248,7 @@ def db_info_command(ticker: str) -> int:
         print("-" * 40)
         
         if not info['exists']:
+            logger.info("No data found for this ticker")
             print("No data found for this ticker.")
             return 0
         
@@ -290,6 +290,7 @@ def db_info_command(ticker: str) -> int:
         ])
         
         if total_financial > 0:
+            logger.info(f"Financial analysis ready with {total_financial} total records")
             print(f"\n✅ Financial analysis ready with {total_financial} total records")
         else:
             print(f"\n💡 Use 'fetch-financial-statements' command to get structured financial data")
@@ -297,11 +298,10 @@ def db_info_command(ticker: str) -> int:
         return 0
         
     except ValidationError as e:
-        print(f"ERROR: {e}")
+        logger.error(f"Validation error: {e}")
         return 1
     except Exception as e:
         logger.error(f"Unexpected error in db_info_command: {e}", exc_info=True)
-        print(f"ERROR: Unexpected error: {e}")
         return 1
 
 
@@ -329,16 +329,16 @@ def fetch_financial_statements_command(
         if instrument_info and instrument_info.get('instrument_type'):
             instrument_type = InstrumentType(instrument_info['instrument_type'])
             if not should_fetch_fundamentals(instrument_type):
-                print(f"⚠️  Skipping fundamental data for {ticker} (instrument type: {instrument_type.value})")
+                logger.warning(f"Skipping fundamental data for {ticker} (instrument type: {instrument_type.value})")
                 print("Fundamental data is only available for stocks.")
                 print("Indices, funds, ETFs, and commodities don't have traditional fundamental data.")
                 return SUCCESS_EXIT_CODE
         
-        print(f"Running financial ETL pipeline for {ticker}...")
+        logger.info(f"Starting financial data fetch for {ticker}")
         if quarterly:
-            print("Including both annual and quarterly data for comprehensive analysis.")
+            logger.info("Including both annual and quarterly data for comprehensive analysis")
         else:
-            print("Fetching annual data only.")
+            logger.info("Fetching annual data only")
         
         # Initialize ETL orchestrator
         etl = ETLOrchestrator()
@@ -350,7 +350,7 @@ def fetch_financial_statements_command(
         if etl_results['status'] == 'completed':
             load_results = etl_results['phases']['load']['loaded_records']
             
-            print(f"\n✅ ETL Pipeline completed successfully!")
+            logger.info(f"Completed financial data fetch for {ticker}")
             print(f"📊 Pipeline Summary:")
             print(f"  • Extract: {etl_results['phases']['extract']['data_sources_count']} data sources")
             print(f"  • Transform: {etl_results['phases']['transform']['statements_count']} statement types")
@@ -361,28 +361,26 @@ def fetch_financial_statements_command(
             for record_type, count in load_results.items():
                 print(f"    - {record_type.replace('_', ' ').title()}: {count} records")
             
-            print(f"\n🎉 Operation completed successfully! Stored {total_records} total records.")
-            print("✅ Data is now ready for rigorous financial analysis.")
+            logger.info(f"Stored {total_records} financial records for {ticker}")
+            print(f"✅ Data is now ready for rigorous financial analysis of {ticker}.")
         else:
-            print(f"ERROR: ETL pipeline failed - {etl_results.get('error', 'Unknown error')}")
+            logger.error(f"ETL pipeline failed - {etl_results.get('error', 'Unknown error')}")
             if etl_results['phases'].get('load', {}).get('errors'):
-                print("Load errors:")
+                logger.error("Load errors:")
                 for error in etl_results['phases']['load']['errors']:
-                    print(f"  - {error}")
+                    logger.error(f"  - {error}")
             return 1
         
         return 0
         
     except ValidationError as e:
-        print(f"ERROR: {e}")
+        logger.error(f"Validation error: {e}")
         return 1
     except YahooFinanceError as e:
-        print(f"ERROR: Failed to fetch financial statements for {ticker} from Yahoo Finance.")
-        print(str(e))
+        logger.error(f"Failed to fetch financial statements for {ticker} from Yahoo Finance: {e}")
         return 1
     except Exception as e:
         logger.error(f"Unexpected error in fetch_financial_statements_command: {e}", exc_info=True)
-        print(f"ERROR: Unexpected error: {e}")
         return 1
 
 
@@ -2215,9 +2213,8 @@ def fetch_all_command(
         db = DatabaseManager()
         today = date.today()
         
-        print("🔄 Fetch-All: Updating all data from latest dates to today")
-        print(f"📅 Target date: {today}")
-        print()
+        logger.info("Starting fetch-all command to update all data from latest dates to today")
+        logger.info(f"Target date: {today}")
         
         # Track overall results
         total_operations = 0
@@ -2229,12 +2226,11 @@ def fetch_all_command(
         # =============================================================================
         
         if not economic_only:
-            print("📈 UPDATING PRICE DATA")
-            print("=" * 50)
+            logger.info("Updating price data for all instruments")
             
             # Get all instruments
             instruments = db.get_all_instruments_info()
-            print(f"Found {len(instruments)} instruments in database")
+            logger.info(f"Found {len(instruments)} instruments in database")
             
             for instrument in instruments:
                 ticker = instrument['ticker_symbol']
@@ -2245,23 +2241,23 @@ def fetch_all_command(
                     date_range = db.get_price_date_range(ticker)
                     
                     if date_range is None:
-                        print(f"⚠️  {ticker}: No existing price data - skipping (use fetch-prices first)")
+                        logger.warning(f"{ticker}: No existing price data - skipping (use fetch-prices first)")
                         continue
                         
                     min_date, max_date = date_range
                     next_date = max_date + timedelta(days=1)
                     
                     if next_date > today:
-                        print(f"✅ {ticker}: Already up to date (latest: {max_date})")
+                        logger.info(f"{ticker}: Already up to date (latest: {max_date})")
                         successful_operations += 1
                         continue
                     
                     if dry_run:
-                        print(f"📋 {ticker}: Would fetch prices from {next_date} to {today}")
+                        logger.info(f"{ticker}: Would fetch prices from {next_date} to {today}")
                         successful_operations += 1
                         continue
                     
-                    print(f"🔄 {ticker}: Fetching prices from {next_date} to {today}")
+                    logger.info(f"{ticker}: Fetching prices from {next_date} to {today}")
                     
                     # Call existing fetch_prices_command
                     result = fetch_prices_command(
@@ -2271,24 +2267,24 @@ def fetch_all_command(
                     )
                     
                     if result == SUCCESS_EXIT_CODE:
-                        print(f"✅ {ticker}: Price update successful")
+                        logger.info(f"{ticker}: Price update successful")
                         successful_operations += 1
                         
                         # Also update financial data for stocks
                         if not prices_only and instrument['instrument_type'] == 'stock':
-                            print(f"📊 {ticker}: Updating financial statements...")
+                            logger.info(f"{ticker}: Updating financial statements")
                             fin_result = fetch_financial_statements_command(ticker=ticker, quarterly=True)
                             if fin_result == SUCCESS_EXIT_CODE:
-                                print(f"✅ {ticker}: Financial statements updated")
+                                logger.info(f"{ticker}: Financial statements updated")
                             else:
-                                print(f"⚠️  {ticker}: Financial statements update failed")
+                                logger.warning(f"{ticker}: Financial statements update failed")
                     else:
                         failed_operations.append(f"{ticker} (prices)")
-                        print(f"❌ {ticker}: Price update failed")
+                        logger.error(f"{ticker}: Price update failed")
                         
                 except Exception as e:
                     failed_operations.append(f"{ticker} (prices): {str(e)}")
-                    print(f"❌ {ticker}: Error - {str(e)}")
+                    logger.error(f"{ticker}: Error - {str(e)}")
             
             print()
         
@@ -2297,8 +2293,7 @@ def fetch_all_command(
         # =============================================================================
         
         if not prices_only:
-            print("📊 UPDATING ECONOMIC INDICATORS")
-            print("=" * 50)
+            logger.info("Updating economic indicators")
             
             # Get all economic indicators
             indicators = db.get_all_economic_indicators()

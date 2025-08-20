@@ -208,7 +208,7 @@ def safe_parse_date(date_string: str, format_string: str = "%Y-%m-%d") -> Option
     Usage:
         parsed_date = safe_parse_date("2024-01-01")
         if parsed_date:
-            print(f"Parsed: {parsed_date}")
+            # Debug print removed for production
     """
     try:
         return datetime.strptime(date_string.strip(), format_string).date()

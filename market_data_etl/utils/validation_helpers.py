@@ -54,7 +54,7 @@ def validate_ticker_and_date_range(
             from_date="2024-01-01",
             to_date="2024-12-31"
         )
-        print(f"Validated: {result.ticker} from {result.start_date} to {result.end_date}")
+        # Validation completed - remove debug print
     """
     # Validate ticker
     validated_ticker = validate_ticker(ticker)
@@ -93,7 +93,7 @@ def validate_ticker_only(ticker: str) -> ValidationResult:
         
     Usage:
         result = validate_ticker_only("AAPL")
-        print(f"Validated ticker: {result.ticker}")
+        # Validation completed - remove debug print
     """
     validated_ticker = validate_ticker(ticker)
     
@@ -123,7 +123,7 @@ def validate_ticker_and_years(
         
     Usage:
         result = validate_ticker_and_years("AAPL", 5)
-        print(f"Validated: {result.ticker} for {result.years} years")
+        # Validation completed - remove debug print
     """
     validated_ticker = validate_ticker(ticker)
     validate_years_parameter(years, min_years, max_years)

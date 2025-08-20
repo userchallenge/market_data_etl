@@ -595,7 +595,9 @@ def main() -> NoReturn:
         elif args.command == 'aligned-data-info':
             exit_code = aligned_data_info_command()
         else:
-            print(f"ERROR: Unknown command: {args.command}")
+            from ..utils.logging import get_logger
+            logger = get_logger(__name__)
+            logger.error(f"Unknown command: {args.command}")
             exit_code = 1
         
         sys.exit(exit_code)
@@ -604,7 +606,9 @@ def main() -> NoReturn:
         print("\nOperation cancelled by user.")
         sys.exit(1)
     except Exception as e:
-        print(f"ERROR: Unexpected error occurred: {e}")
+        from ..utils.logging import get_logger
+        logger = get_logger(__name__)
+        logger.error(f"Unexpected error occurred: {e}")
         if args.verbose:
             import traceback
             traceback.print_exc()

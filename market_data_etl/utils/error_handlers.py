@@ -77,14 +77,13 @@ def handle_cli_command_errors(command_name: str):
             try:
                 return func(*args, **kwargs)
             except ValidationError as e:
-                print(f"ERROR: {e}")
+                logger.error(f"Validation error: {e}")
                 return ERROR_EXIT_CODE
             except YahooFinanceError as e:
-                print(f"ERROR: {str(e)}")
+                logger.error(f"Yahoo Finance error: {str(e)}")
                 return ERROR_EXIT_CODE
             except Exception as e:
                 logger.error(f"Unexpected error in {command_name}: {e}", exc_info=True)
-                print(f"ERROR: Unexpected error: {e}")
                 return ERROR_EXIT_CODE
         return wrapper
     return decorator
