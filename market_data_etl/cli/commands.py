@@ -1535,16 +1535,21 @@ def generate_price_csv_template_command(ticker: str, output_file: str) -> int:
 
 def _get_indicator_reverse_mapping() -> Dict[str, tuple]:
     """Get reverse mapping from standardized names to source info."""
-    # Mapping from CSV data provided by user
-    return {
-        'inflation_monthly_euro': ('eurostat', 'prc_hicp_mmor', 'Eurozone Inflation (HICP, monthly rate of change)'),
-        'unemployment_rate_monthly_euro': ('eurostat', 'ei_lmhr_m', 'Eurozone Unemployment Rate'),
-        'interest_rate_change_day_euro': ('ecb', 'FM.D.U2.EUR.4F.KR.MRR_FR.LEV', 'Eurozone Interest Rate (Main Refinancing Operations)'),
-        'interest_rate_monthly_euro': ('ecb', 'FM.B.U2.EUR.4F.KR.MRR_FR.LEV', 'Eurozone Monthly Interest Rate (Main Refinancing Operations)'),
-        'unemployment_monthly_rate_us': ('fred', 'UNRATE', 'US Unemployment Rate'),
-        'inflation_index_monthly_us': ('fred', 'CPIAUCSL', 'US Consumer Price Index (CPI)'),
-        'interest_rate_monthly_us': ('fred', 'DFF', 'US Federal Funds Rate'),
-    }
+    from ..config import config
+    
+    # Build reverse mapping from economic_indicators.yaml config
+    mapping = {}
+    
+    if config.economic_indicators:
+        for indicator_name, indicator_config in config.economic_indicators.items():
+            source = indicator_config.get('source')
+            source_identifier = indicator_config.get('source_identifier')
+            description = indicator_config.get('description', f'{source.upper()} indicator: {source_identifier}')
+            
+            if source and source_identifier:
+                mapping[indicator_name] = (source, source_identifier, description)
+    
+    return mapping
 
 
 # =============================================================================
