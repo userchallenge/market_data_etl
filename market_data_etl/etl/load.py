@@ -51,10 +51,12 @@ class FinancialDataLoader:
         try:
             # Use DatabaseManager's unified store_financial_data method
             # This method expects the same format as returned by FinancialStatementFetcher
+            company_info = transformed_data.get('company_info', {})
             financial_data_to_store = {
                 'ticker': ticker,
                 'currency': transformed_data.get('currency', 'USD'),
-                'company_info': transformed_data.get('company_info', {}),
+                'company_info': company_info,
+                'instrument_info': company_info,  # DatabaseManager expects instrument_info
                 'statements': transformed_data.get('statements', {}),
                 'derived_metrics': transformed_data.get('derived_metrics', {}),
                 'fetch_timestamp': transformed_data.get('transformation_timestamp')

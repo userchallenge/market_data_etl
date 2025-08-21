@@ -76,6 +76,7 @@ class Config:
     log_level: str = "INFO"
     log_file: Optional[str] = None
     economic_indicators: Optional[Dict[str, Any]] = None
+    exchange_mappings: Optional[Dict[str, str]] = None
     
     @classmethod
     def from_env(cls) -> "Config":
@@ -165,6 +166,14 @@ class Config:
                 indicators_data = yaml.safe_load(f)
                 economic_indicators = indicators_data.get('indicators', {})
         
+        # Load exchange mappings config
+        exchange_config_path = app_config_path.parent / "exchange_mappings.yaml"
+        exchange_mappings = None
+        if exchange_config_path.exists():
+            with open(exchange_config_path, 'r') as f:
+                exchange_data = yaml.safe_load(f)
+                exchange_mappings = exchange_data.get('exchanges', {})
+        
         # Create config objects from YAML data with env var overrides
         database_config = DatabaseConfig(
             path=os.getenv("MARKET_DATA_DB_PATH", app_config.get('database', {}).get('path', 'market_data.db')),
@@ -194,7 +203,8 @@ class Config:
             api=api_config,
             log_level=os.getenv("MARKET_DATA_LOG_LEVEL", app_config.get('logging', {}).get('level', 'INFO')),
             log_file=os.getenv("MARKET_DATA_LOG_FILE", app_config.get('logging', {}).get('file')),
-            economic_indicators=economic_indicators
+            economic_indicators=economic_indicators,
+            exchange_mappings=exchange_mappings
         )
     
     def get_economic_indicator_config(self, indicator_name: str) -> Optional[Dict[str, Any]]:
@@ -215,6 +225,26 @@ class Config:
         """Get list of all available economic indicators."""
         if self.economic_indicators:
             return list(self.economic_indicators.keys())
+        return []
+    
+    def get_country_from_exchange(self, exchange_code: str) -> Optional[str]:
+        """
+        Get country name from exchange code using configured mappings.
+        
+        Args:
+            exchange_code: Exchange code (e.g., 'STO', 'LSE', 'NMS')
+            
+        Returns:
+            Country name if mapping exists, None otherwise
+        """
+        if self.exchange_mappings and exchange_code in self.exchange_mappings:
+            return self.exchange_mappings[exchange_code]
+        return None
+    
+    def list_supported_exchanges(self) -> list[str]:
+        """Get list of all supported exchange codes."""
+        if self.exchange_mappings:
+            return list(self.exchange_mappings.keys())
         return []
 
 

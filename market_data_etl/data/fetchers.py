@@ -134,6 +134,36 @@ def detect_from_symbol_pattern(ticker_symbol: str) -> InstrumentType:
     return InstrumentType.UNKNOWN
 
 
+def resolve_country_from_exchange(ticker_info: Dict[str, Any]) -> str:
+    """
+    Resolve country using exchange-based mapping with fallback to Yahoo Finance data.
+    
+    Args:
+        ticker_info: Dictionary containing Yahoo Finance info data
+        
+    Returns:
+        Country name based on exchange jurisdiction or Yahoo Finance headquarters
+    """
+    from ..config import config
+    
+    # Get exchange code from Yahoo Finance data
+    exchange_code = ticker_info.get('exchange', '').strip().upper()
+    
+    if exchange_code:
+        # Try to get country from exchange mapping
+        exchange_country = config.get_country_from_exchange(exchange_code)
+        if exchange_country:
+            return exchange_country
+    
+    # Fallback to Yahoo Finance country field
+    yahoo_country = ticker_info.get('country', '').strip()
+    if yahoo_country:
+        return yahoo_country
+    
+    # Last resort
+    return "Unknown"
+
+
 def detect_instrument_type(ticker_symbol: str, yahoo_info: Dict[str, Any]) -> InstrumentType:
     """
     Detect instrument type using Yahoo Finance quoteType with fallback logic.

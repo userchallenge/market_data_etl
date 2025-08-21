@@ -115,12 +115,16 @@ class DatabaseManager:
             if instrument:
                 # Update instrument information if provided
                 if instrument_info:
+                    # Use exchange-based country resolution
+                    from ..data.fetchers import resolve_country_from_exchange
+                    resolved_country = resolve_country_from_exchange(instrument_info)
+                    
                     instrument.instrument_name = instrument_info.get('instrument_name') or instrument.instrument_name
                     instrument.isin = isin or instrument.isin
                     instrument.instrument_type = instrument_type
                     instrument.sector = instrument_info.get('sector') or instrument.sector
                     instrument.industry = instrument_info.get('industry') or instrument.industry
-                    instrument.country = instrument_info.get('country') or instrument.country
+                    instrument.country = resolved_country or instrument.country
                     instrument.currency = currency
                     instrument.market_cap = instrument_info.get('market_cap') or instrument.market_cap
                     instrument.employees = instrument_info.get('employees') or instrument.employees
@@ -131,6 +135,11 @@ class DatabaseManager:
             else:
                 # Create new instrument record
                 info = instrument_info or {}
+                
+                # Use exchange-based country resolution
+                from ..data.fetchers import resolve_country_from_exchange
+                resolved_country = resolve_country_from_exchange(info) if info else 'Unknown'
+                
                 instrument = Instrument(
                     ticker_symbol=ticker,
                     isin=isin,
@@ -138,7 +147,7 @@ class DatabaseManager:
                     instrument_name=info.get('instrument_name', ''),
                     sector=info.get('sector', ''),
                     industry=info.get('industry', ''),
-                    country=info.get('country', ''),
+                    country=resolved_country,
                     currency=currency,
                     market_cap=info.get('market_cap'),
                     employees=info.get('employees'),
@@ -480,10 +489,14 @@ class DatabaseManager:
         
         if instrument:
             # Update instrument information
+            # Use exchange-based country resolution
+            from ..data.fetchers import resolve_country_from_exchange
+            resolved_country = resolve_country_from_exchange(instrument_info)
+            
             instrument.instrument_name = instrument_info.get('instrument_name') or instrument.instrument_name
             instrument.sector = instrument_info.get('sector') or instrument.sector
             instrument.industry = instrument_info.get('industry') or instrument.industry
-            instrument.country = instrument_info.get('country') or instrument.country
+            instrument.country = resolved_country or instrument.country
             instrument.currency = currency
             instrument.market_cap = instrument_info.get('market_cap') or instrument.market_cap
             instrument.employees = instrument_info.get('employees') or instrument.employees
@@ -492,12 +505,16 @@ class DatabaseManager:
             self.logger.debug(f"Updated existing instrument record for {ticker}")
         else:
             # Create new instrument record
+            # Use exchange-based country resolution
+            from ..data.fetchers import resolve_country_from_exchange
+            resolved_country = resolve_country_from_exchange(instrument_info)
+            
             instrument = Instrument(
                 ticker_symbol=ticker,
                 instrument_name=instrument_info.get('instrument_name', ''),
                 sector=instrument_info.get('sector', ''),
                 industry=instrument_info.get('industry', ''),
-                country=instrument_info.get('country', ''),
+                country=resolved_country,
                 currency=currency,
                 market_cap=instrument_info.get('market_cap'),
                 employees=instrument_info.get('employees'),
