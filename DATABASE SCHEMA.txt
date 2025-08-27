@@ -1,0 +1,42 @@
+DATABASE SCHEMA - market_data_etl:
+
+  INSTRUMENTS: id(PK), ticker_symbol, isin, instrument_name, instrument_type, sector, industry, country, currency, market_cap, employees, founded_year, fund_type,
+  index_methodology, constituent_count, base_date, base_value
+
+  PRICES: id(PK), instrument_id(FK→instruments), date, open, high, low, close, adj_close, volume
+
+  INCOME_STATEMENTS: id(PK), instrument_id(FK→instruments), period_end_date, period_type, fiscal_year, fiscal_quarter, currency, total_revenue, cost_of_revenue, gross_profit, 
+  research_development, sales_marketing, general_administrative, total_operating_expenses, operating_income, interest_expense, interest_income, other_income_expense, 
+  income_before_tax, tax_provision, net_income, net_income_common, basic_eps, diluted_eps, weighted_average_shares, weighted_average_shares_diluted, ebitda,
+  depreciation_amortization
+
+  BALANCE_SHEETS: id(PK), instrument_id(FK→instruments), period_end_date, period_type, fiscal_year, fiscal_quarter, currency, cash_and_equivalents, short_term_investments,
+  accounts_receivable, inventory, prepaid_expenses, other_current_assets, total_current_assets, property_plant_equipment, goodwill, intangible_assets, long_term_investments, 
+  other_non_current_assets, total_non_current_assets, total_assets, accounts_payable, short_term_debt, accrued_expenses, deferred_revenue_current, other_current_liabilities,
+  total_current_liabilities, long_term_debt, deferred_revenue_non_current, deferred_tax_liabilities, other_non_current_liabilities, total_non_current_liabilities, 
+  total_liabilities, common_stock, retained_earnings, accumulated_other_income, treasury_stock, total_shareholders_equity, total_debt, net_debt, working_capital,
+  book_value_per_share
+
+  CASH_FLOWS: id(PK), instrument_id(FK→instruments), period_end_date, period_type, fiscal_year, fiscal_quarter, currency, net_income, depreciation_amortization,
+  stock_compensation, deferred_tax, change_accounts_receivable, change_inventory, change_accounts_payable, change_other_working_capital, operating_cash_flow, capital_expenditures,
+   acquisitions, purchases_investments, sales_maturities_investments, other_investing_activities, investing_cash_flow, debt_issuance, debt_repayment, common_stock_issuance,
+  common_stock_repurchase, dividends_paid, other_financing_activities, financing_cash_flow, net_change_cash, cash_beginning, cash_ending, free_cash_flow, fcf_per_share
+
+  FINANCIAL_RATIOS: id(PK), instrument_id(FK→instruments), period_end_date, period_type, fiscal_year, fiscal_quarter, gross_profit_margin, operating_profit_margin,
+  net_profit_margin, return_on_assets, return_on_equity, return_on_invested_capital, current_ratio, quick_ratio, cash_ratio, debt_to_equity, debt_to_assets, interest_coverage, 
+  debt_service_coverage, asset_turnover, inventory_turnover, receivables_turnover, days_sales_outstanding, price_to_earnings, price_to_book, price_to_sales, enterprise_value, 
+  ev_to_revenue, ev_to_ebitda, revenue_growth_yoy, net_income_growth_yoy, eps_growth_yoy
+
+  ALIGNED_DAILY_DATA: date+instrument_id(PK), open_price, high_price, low_price, close_price, adjusted_close, volume, inflation_monthly_us, inflation_index_monthly_us, 
+  unemployment_monthly_rate_us, interest_rate_monthly_us, inflation_monthly_euro, unemployment_rate_monthly_euro, interest_rate_change_day_euro, interest_rate_monthly_euro, 
+  trading_calendar
+
+  ECONOMIC_INDICATORS: id(PK), name, source, source_identifier, description, unit, frequency
+  ECONOMIC_INDICATOR_DATA: id(PK), indicator_id(FK→economic_indicators), date, value
+
+  PORTFOLIOS: id(PK), name, description, currency, created_date
+  PORTFOLIO_HOLDINGS: id(PK), portfolio_id(FK→portfolios), instrument_id(FK→instruments), sector, fund_type, notes
+  TRANSACTIONS: id(PK), portfolio_id(FK→portfolios), instrument_id(FK→instruments), transaction_date, transaction_type, quantity, price_per_unit, currency, fees, broker, notes, 
+  total_amount
+
+  THRESHOLDS: id(PK), indicator_id(FK→economic_indicators), category, min_value, max_value

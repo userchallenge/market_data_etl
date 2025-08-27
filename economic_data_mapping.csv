@@ -1,5 +1,5 @@
 name,source,source_identifier,description
-inflation_monthly_euro,eurostat,prc_hicp_mmor,"Eurozone Inflation (HICP, monthly rate of change)"
+inflation_monthly_euro,eurostat,prc_hicp_manr,"Eurozone Inflation (HICP, annual rate of change)"
 unemployment_rate_monthly_euro,eurostat,ei_lmhr_m,"Eurozone Unemployment Rate"
 interest_rate_change_day_euro,ecb,"FM; B.U2.EUR.4F.KR.MRR_FR.LEV","Eurozone Interest Rate (Main Refinancing Operations)"
 interest_rate_monthly_euro,ecb,"FM; B.U2.EUR.4F.KR.MRR_FR.LEV","Eurozone Monthly Interest Rate (Main Refinancing Operations)"

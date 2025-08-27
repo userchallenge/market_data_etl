@@ -458,12 +458,12 @@ class EconomicDataTransformer:
             # Extract time series data from FRED JSON structure
             data_points = self._parse_fred_json(json_data)
             
-            # Special handling for CPI data - calculate both index and monthly rate
+            # Special handling for CPI data - calculate both index and inflation rate
             if series_id == 'CPIAUCSL':
-                # Calculate monthly rate of change
-                rate_data_points = self._calculate_monthly_rate_change(data_points)
+                # Calculate year-over-year inflation rate
+                rate_data_points = self._calculate_inflation_rate(data_points)
                 
-                # Store both the index and the calculated monthly rate
+                # Store both the index and the calculated inflation rate
                 transformed_data = [
                     {
                         'name': 'inflation_index_monthly_us',
@@ -479,7 +479,7 @@ class EconomicDataTransformer:
                         'name': 'inflation_monthly_us',
                         'source': 'fred',
                         'source_identifier': series_id,
-                        'description': 'US CPI (Monthly Rate of Change)', 
+                        'description': 'US CPI (Year-over-Year Inflation Rate)', 
                         'unit': 'percent',
                         'frequency': 'monthly',
                         'transformation_timestamp': datetime.now(timezone.utc).isoformat(),
@@ -836,34 +836,35 @@ class EconomicDataTransformer:
             f"Please add this indicator to config/economic_indicators.yaml or verify the source/identifier values."
         )
     
-    def _calculate_monthly_rate_change(self, data_points: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _calculate_inflation_rate(self, data_points: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
-        Calculate month-over-month percentage change from index values.
+        Calculate year-over-year inflation rate from CPI index values.
         
         Args:
             data_points: List of data points with 'date' and 'value' keys
             
         Returns:
-            List of data points with monthly rate of change values
+            List of data points with year-over-year inflation rate values
         """
-        if len(data_points) < 2:
+        if len(data_points) < 13:  # Need at least 13 months for YoY calculation
             return []
         
         # Sort by date to ensure correct order
         sorted_points = sorted(data_points, key=lambda x: x['date'])
-        rate_changes = []
+        inflation_rates = []
         
-        for i in range(1, len(sorted_points)):
+        # Start from month 12 (index 12) to compare with month 0 (12 months earlier)
+        for i in range(12, len(sorted_points)):
             current = sorted_points[i]
-            previous = sorted_points[i-1]
+            year_ago = sorted_points[i-12]
             
-            if previous['value'] and previous['value'] != 0:
-                # Calculate month-over-month percentage change
-                rate_change = ((current['value'] - previous['value']) / previous['value']) * 100
+            if year_ago['value'] and year_ago['value'] != 0:
+                # Calculate year-over-year percentage change
+                inflation_rate = ((current['value'] - year_ago['value']) / year_ago['value']) * 100
                 
-                rate_changes.append({
+                inflation_rates.append({
                     'date': current['date'],
-                    'value': round(rate_change, 4)
+                    'value': round(inflation_rate, 4)
                 })
         
-        return rate_changes
+        return inflation_rates
