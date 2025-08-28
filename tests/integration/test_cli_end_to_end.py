@@ -154,6 +154,8 @@ class TestEconomicCLICommands(TestCLIEndToEnd):
         assert 'inflation' in stdout
         assert 'unemployment' in stdout
         assert 'interest' in stdout
+        # Should show that se is a supported area code
+        assert 'se' in stdout
     
     def test_fetch_all_economic_indicators_help(self):
         """Test fetch-all-economic-indicators command help."""
@@ -231,6 +233,36 @@ class TestEconomicCLICommands(TestCLIEndToEnd):
         assert returncode in [0, 1]
         assert stdout is not None
     
+    def test_fetch_economic_indicator_unemployment_se(self):
+        """Test fetch-economic-indicator for Swedish unemployment (Eurostat)."""
+        returncode, stdout, stderr = self.run_cli_command([
+            'fetch-economic-indicator',
+            '--indicator', 'unemployment',
+            '--area', 'se',
+            '--from', '2024-01-01',
+            '--to', '2024-01-01'
+        ])
+        
+        # Should process without API key requirement
+        # May succeed or fail depending on network/API
+        assert returncode in [0, 1]
+        assert stdout is not None
+    
+    def test_fetch_economic_indicator_interest_se(self):
+        """Test fetch-economic-indicator for Swedish interest rates (Eurostat)."""
+        returncode, stdout, stderr = self.run_cli_command([
+            'fetch-economic-indicator',
+            '--indicator', 'interest',
+            '--area', 'se',
+            '--from', '2024-01-01',
+            '--to', '2024-01-01'
+        ])
+        
+        # Should process without API key requirement
+        # May succeed or fail depending on network/API
+        assert returncode in [0, 1]
+        assert stdout is not None
+    
     @pytest.mark.external_api
     def test_fetch_economic_indicator_with_fred_key(self):
         """Test fetch-economic-indicator with FRED API key."""
@@ -269,6 +301,40 @@ class TestEconomicCLICommands(TestCLIEndToEnd):
         # Should show some processing information
         assert ('processing' in stdout.lower() or 'completed' in stdout.lower() or 
                 'failed' in stdout.lower() or '✅' in stdout or '❌' in stdout)
+    
+    @pytest.mark.external_api
+    def test_fetch_economic_indicator_swedish_unemployment_external(self):
+        """Test Swedish unemployment with real Eurostat API."""
+        returncode, stdout, stderr = self.run_cli_command([
+            'fetch-economic-indicator',
+            '--indicator', 'unemployment',
+            '--area', 'se',
+            '--from', '2024-01-01',
+            '--to', '2024-01-01'
+        ])
+        
+        # May succeed or fail depending on API availability
+        assert returncode in [0, 1]
+        assert stdout is not None
+        if returncode == 0:
+            assert 'se' in stdout.lower() or 'sweden' in stdout.lower() or '✅' in stdout
+    
+    @pytest.mark.external_api
+    def test_fetch_economic_indicator_swedish_interest_external(self):
+        """Test Swedish interest rates with real Eurostat API."""
+        returncode, stdout, stderr = self.run_cli_command([
+            'fetch-economic-indicator',
+            '--indicator', 'interest',
+            '--area', 'se',
+            '--from', '2024-01-01',
+            '--to', '2024-01-01'
+        ])
+        
+        # May succeed or fail depending on API availability
+        assert returncode in [0, 1]
+        assert stdout is not None
+        if returncode == 0:
+            assert 'se' in stdout.lower() or 'sweden' in stdout.lower() or '✅' in stdout
     
     def test_db_info_economic_data_query(self):
         """Test querying economic data via db-info (if implemented)."""

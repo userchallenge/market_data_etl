@@ -50,6 +50,8 @@ Examples:
   %(prog)s fetch-financial-statements --ticker AAPL
   %(prog)s fetch-economic-indicator --indicator unemployment --area us --from 2024-01-01 --to 2024-12-31
   %(prog)s fetch-economic-indicator --indicator inflation --area ea --from 2024-01-01
+  %(prog)s fetch-economic-indicator --indicator unemployment --area se --from 2024-01-01
+  %(prog)s fetch-economic-indicator --indicator interest --area se --from 2024-01-01
   %(prog)s fetch-all-economic-indicators --from 2020-01-01
   %(prog)s fetch-all-economic-indicators --from 2020-01-01 --to 2024-12-31
   %(prog)s db-info --ticker VOLV-B.ST
@@ -58,14 +60,14 @@ Examples:
   %(prog)s fetch-portfolio-prices --portfolio "My Portfolio" --from 2024-01-01
   %(prog)s generate-price-csv-template --ticker ^OMXS30 --output omxs30_template.csv
   %(prog)s load-price-csv --file omxs30_data.csv --ticker ^OMXS30
-  %(prog)s align-data --ticker AAPL --economic-indicator inflation_monthly_us
-  %(prog)s align-data --ticker MSFT --economic-indicator unemployment_monthly_rate_us --from 2024-01-01 --method forward_fill
+  %(prog)s align-data --ticker AAPL --economic-indicator inflation_us
+  %(prog)s align-data --ticker MSFT --economic-indicator unemployment_us --from 2024-01-01 --method forward_fill
   %(prog)s alignment-info
   %(prog)s alignment-pairs --limit 10
   %(prog)s rebuild-aligned-data --ticker AAPL --from 2024-01-01
   %(prog)s rebuild-aligned-data --from 2024-01-01 --to 2024-12-31
   %(prog)s query-aligned-data --ticker AAPL --from 2024-01-01 --output detailed
-  %(prog)s query-aligned-data --ticker ESSITY-B.ST --indicators inflation_monthly_euro
+  %(prog)s query-aligned-data --ticker ESSITY-B.ST --indicators inflation_ea
   %(prog)s aligned-data-info
   
 Environment Variables:

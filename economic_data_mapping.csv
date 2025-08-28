@@ -1,11 +1,12 @@
 name,source,source_identifier,description
 inflation_ea,eurostat,prc_hicp_manr,"Euro Area Inflation (HICP, annual rate of change)"
 unemployment_ea,eurostat,ei_lmhr_m,"Euro Area Unemployment Rate"
-interest_ea_daily,ecb,"FM.D.U2.EUR.4F.KR.MRR_FR.LEV","Euro Area Interest Rate (Main Refinancing Operations, Daily)"
 interest_ea,ecb,"FM.B.U2.EUR.4F.KR.MRR_FR.LEV","Euro Area Interest Rate (Main Refinancing Operations, Monthly)"
 unemployment_us,fred,UNRATE,"US Unemployment Rate"
 inflation_index_us,fred,CPIAUCSL,"US Consumer Price Index (CPI)"
 interest_us,fred,DFF,"US Federal Funds Rate"
 inflation_us,fred,CPIAUCSL,"US Inflation Rate (Year-over-Year)"
 inflation_se,eurostat,prc_hicp_manr,"Swedish Inflation (HICP, annual rate of change)"
+unemployment_se,eurostat,ei_lmhr_m,"Swedish Unemployment Rate"
+interest_se,eurostat,irt_st_m,"Swedish Interest Rate (Short-term rates, monthly)"
 inflation_gb,oecd,PRICES_CPI,"Great Britain Inflation (CPI, annual rate of change)"
