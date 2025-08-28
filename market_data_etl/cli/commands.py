@@ -1039,15 +1039,17 @@ def portfolio_info_command(portfolio_name: str) -> int:
 
 
 def fetch_economic_indicator_command(
-    name: str,
+    indicator: str,
+    area: str,
     from_date: str,
     to_date: Optional[str] = None
 ) -> int:
     """
-    Handle fetch-economic-indicator command to fetch economic data using standardized names.
+    Handle fetch-economic-indicator command to fetch economic data using simplified parameters.
     
     Args:
-        name: Standardized economic indicator name (e.g., unemployment_monthly_rate_us)
+        indicator: Economic indicator type (inflation, unemployment, interest)
+        area: Geographic area code (us, ea, se, gb)
         from_date: Start date in YYYY-MM-DD format
         to_date: End date in YYYY-MM-DD format (optional)
         
@@ -1063,13 +1065,31 @@ def fetch_economic_indicator_command(
         if to_date:
             validate_date_string(to_date, "to_date")
         
+        # Construct indicator name from indicator and area
+        # Handle special cases for interest rates (daily vs monthly)
+        if indicator == 'interest' and area == 'ea':
+            # For Euro Area interest rates, check if we should use daily variant
+            # For now, default to monthly
+            constructed_name = f"{indicator}_{area}"
+        else:
+            constructed_name = f"{indicator}_{area}"
+        
         # Map name to source info
         mapping = _get_indicator_reverse_mapping()
-        if name not in mapping:
-            print(f"ERROR: Unknown indicator '{name}'")
-            print(f"Available: {', '.join(sorted(mapping.keys()))}")
-            return ERROR_EXIT_CODE
+        if constructed_name not in mapping:
+            # Try special cases
+            available_variants = [k for k in mapping.keys() if k.startswith(f"{indicator}_")]
+            if not available_variants:
+                print(f"ERROR: Unknown indicator type '{indicator}' for area '{area}'")
+                print(f"Available indicators: {', '.join(['inflation', 'unemployment', 'interest'])}")
+                print(f"Available areas: {', '.join(['us', 'ea', 'se', 'gb'])}")
+                return ERROR_EXIT_CODE
+            else:
+                print(f"ERROR: Unknown combination '{indicator}' + '{area}'")
+                print(f"Available variants for {indicator}: {', '.join(available_variants)}")
+                return ERROR_EXIT_CODE
         
+        name = constructed_name
         source, source_identifier, description, geo_filter, country_code = mapping[name]
         
         # Note: All economic data sources fetch data through specified date range
@@ -1161,11 +1181,35 @@ def fetch_all_economic_indicators_command(
             try:
                 print(f"Fetching {description}")
                 
-                # Call the existing fetch logic
-                if to_date:
-                    result = fetch_economic_indicator_command(indicator_name, from_date, to_date)
+                # Parse indicator name to extract indicator and area
+                # Names are in format: indicator_area (e.g., inflation_us, unemployment_ea)
+                if '_' in indicator_name:
+                    parts = indicator_name.rsplit('_', 1)  # Split from right to handle interest_ea_daily
+                    if len(parts) == 2:
+                        indicator_type = parts[0]
+                        area = parts[1]
+                        
+                        # Handle special cases
+                        if indicator_name == 'interest_ea_daily':
+                            # For now, map daily interest to regular interest
+                            indicator_type = 'interest'
+                            area = 'ea'
+                        elif indicator_name == 'inflation_index_us':
+                            # For now, skip inflation_index as it's handled by inflation_us
+                            print(f"⚠️ Skipping {indicator_name} (handled by inflation_us)")
+                            continue
+                        
+                        # Call the existing fetch logic with new signature
+                        if to_date:
+                            result = fetch_economic_indicator_command(indicator_type, area, from_date, to_date)
+                        else:
+                            result = fetch_economic_indicator_command(indicator_type, area, from_date)
+                    else:
+                        print(f"⚠️ Cannot parse indicator name: {indicator_name}")
+                        result = ERROR_EXIT_CODE
                 else:
-                    result = fetch_economic_indicator_command(indicator_name, from_date)
+                    print(f"⚠️ Invalid indicator name format: {indicator_name}")
+                    result = ERROR_EXIT_CODE
                 
                 if result == SUCCESS_EXIT_CODE:
                     successful_fetches.append(indicator_name)

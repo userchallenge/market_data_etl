@@ -48,8 +48,8 @@ Examples:
   %(prog)s fetch-all --dry-run
   %(prog)s fetch-all --prices-only
   %(prog)s fetch-financial-statements --ticker AAPL
-  %(prog)s fetch-economic-indicator --name unemployment_monthly_rate_us --from 2024-01-01 --to 2024-12-31
-  %(prog)s fetch-economic-indicator --name inflation_monthly_euro --from 2024-01-01
+  %(prog)s fetch-economic-indicator --indicator unemployment --area us --from 2024-01-01 --to 2024-12-31
+  %(prog)s fetch-economic-indicator --indicator inflation --area ea --from 2024-01-01
   %(prog)s fetch-all-economic-indicators --from 2020-01-01
   %(prog)s fetch-all-economic-indicators --from 2020-01-01 --to 2024-12-31
   %(prog)s db-info --ticker VOLV-B.ST
@@ -268,12 +268,18 @@ Environment Variables:
     # fetch-economic-indicator command
     economic_parser = subparsers.add_parser(
         'fetch-economic-indicator',
-        help='Fetch economic data using standardized indicator names'
+        help='Fetch economic data using simplified indicator and area parameters'
     )
     economic_parser.add_argument(
-        '--name',
+        '--indicator',
         required=True,
-        help='Standardized economic indicator name (e.g., unemployment_monthly_rate_us, inflation_monthly_euro)'
+        choices=['inflation', 'unemployment', 'interest'],
+        help='Economic indicator type: inflation, unemployment, or interest'
+    )
+    economic_parser.add_argument(
+        '--area',
+        required=True,
+        help='Geographic area code (e.g., us, ea, se, gb)'
     )
     economic_parser.add_argument(
         '--from',
@@ -539,7 +545,8 @@ def main() -> NoReturn:
             exit_code = portfolio_info_command(portfolio_name=args.portfolio)
         elif args.command == 'fetch-economic-indicator':
             exit_code = fetch_economic_indicator_command(
-                name=args.name,
+                indicator=args.indicator,
+                area=args.area,
                 from_date=args.from_date,
                 to_date=args.to_date
             )

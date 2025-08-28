@@ -483,7 +483,7 @@ class EconomicDataTransformer:
                 # Store both the index and the calculated inflation rate
                 transformed_data = [
                     {
-                        'name': 'inflation_index_monthly_us',
+                        'name': 'inflation_index_us',
                         'source': 'fred',
                         'source_identifier': series_id,
                         'description': 'US Consumer Price Index (CPI)', 
@@ -494,7 +494,7 @@ class EconomicDataTransformer:
                         'country_code': 'US'  # FRED data is US-specific
                     },
                     {
-                        'name': 'inflation_monthly_us',
+                        'name': 'inflation_us',
                         'source': 'fred',
                         'source_identifier': series_id,
                         'description': 'US CPI (Year-over-Year Inflation Rate)', 
@@ -697,25 +697,25 @@ class EconomicDataTransformer:
         """Get standardized name for economic indicator."""
         # Mapping from descriptive names to standardized names
         name_mapping = {
-            "Harmonised Index of Consumer Prices (HICP)": "inflation_monthly_euro",
-            "Consumer Price Index for All Urban Consumers: All Items in U.S. City Average": "inflation_index_monthly_us",
-            "US Consumer Price Index (CPI)": "inflation_index_monthly_us",
-            "Main Refinancing Operations rate": "interest_rate_change_day_euro", 
-            "Effective Federal Funds Rate": "interest_rate_monthly_us",
-            "US Federal Funds Rate": "interest_rate_monthly_us",
-            "Unemployment rate": "unemployment_rate_monthly_euro",
-            "US Unemployment Rate": "unemployment_monthly_rate_us"
+            "Harmonised Index of Consumer Prices (HICP)": "inflation_ea",
+            "Consumer Price Index for All Urban Consumers: All Items in U.S. City Average": "inflation_index_us",
+            "US Consumer Price Index (CPI)": "inflation_index_us",
+            "Main Refinancing Operations rate": "interest_ea_daily", 
+            "Effective Federal Funds Rate": "interest_us",
+            "US Federal Funds Rate": "interest_us",
+            "Unemployment rate": "unemployment_ea",
+            "US Unemployment Rate": "unemployment_us"
         }
         
         # Also map by source + indicator_id for specific cases  
         source_id_mapping = {
-            "eurostat_prc_hicp_midx": "inflation_monthly_euro",
-            "fred_CPIAUCSL": "inflation_index_monthly_us", 
-            "fred_UNRATE": "unemployment_monthly_rate_us",
-            "fred_DFF": "interest_rate_monthly_us",
-            "ecb_FM.D.U2.EUR.4F.KR.MRR_FR.LEV": "interest_rate_change_day_euro",
-            "ecb_FM.B.U2.EUR.4F.KR.MRR_FR.LEV": "interest_rate_monthly_euro",
-            "eurostat_une_rt_m": "unemployment_rate_monthly_euro"
+            "eurostat_prc_hicp_midx": "inflation_ea",
+            "fred_CPIAUCSL": "inflation_index_us", 
+            "fred_UNRATE": "unemployment_us",
+            "fred_DFF": "interest_us",
+            "ecb_FM.D.U2.EUR.4F.KR.MRR_FR.LEV": "interest_ea_daily",
+            "ecb_FM.B.U2.EUR.4F.KR.MRR_FR.LEV": "interest_ea",
+            "eurostat_une_rt_m": "unemployment_ea"
         }
         
         # Try source_id mapping first (most specific)
