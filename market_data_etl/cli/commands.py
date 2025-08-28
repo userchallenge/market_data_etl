@@ -1070,7 +1070,7 @@ def fetch_economic_indicator_command(
             print(f"Available: {', '.join(sorted(mapping.keys()))}")
             return ERROR_EXIT_CODE
         
-        source, source_identifier, description = mapping[name]
+        source, source_identifier, description, geo_filter, country_code = mapping[name]
         
         # Note: All economic data sources fetch data through specified date range
         
@@ -1092,12 +1092,17 @@ def fetch_economic_indicator_command(
         # Run ETL pipeline
         etl = EconomicETLOrchestrator()
         if source == 'eurostat':
-            results = etl.run_eurostat_etl(source_identifier, from_date, to_date)
+            results = etl.run_eurostat_etl(source_identifier, from_date, to_date, geo_filter, name)
         elif source == 'ecb':
             parts = source_identifier.split('.', 1)
             results = etl.run_ecb_etl(parts[0], parts[1], from_date, to_date)
         elif source == 'fred':
             results = etl.run_fred_etl(source_identifier, api_key, from_date, to_date)
+        elif source == 'oecd':
+            results = etl.run_oecd_etl(source_identifier, country_code, from_date, to_date, name)
+        else:
+            print(f"ERROR: Unsupported source '{source}'")
+            return ERROR_EXIT_CODE
         
         # Report results
         if results['status'] == 'completed':
@@ -1152,7 +1157,7 @@ def fetch_all_economic_indicators_command(
         total_data_points = 0
         
         # Process each indicator
-        for indicator_name, (source, source_identifier, description) in mapping.items():
+        for indicator_name, (source, source_identifier, description, geo_filter, country_code) in mapping.items():
             try:
                 print(f"Fetching {description}")
                 
@@ -1545,9 +1550,11 @@ def _get_indicator_reverse_mapping() -> Dict[str, tuple]:
             source = indicator_config.get('source')
             source_identifier = indicator_config.get('source_identifier')
             description = indicator_config.get('description', f'{source.upper()} indicator: {source_identifier}')
+            geo_filter = indicator_config.get('geo_filter')  # Extract geo filter for Eurostat
+            country_code = indicator_config.get('country_code')  # Extract country code for OECD
             
             if source and source_identifier:
-                mapping[indicator_name] = (source, source_identifier, description)
+                mapping[indicator_name] = (source, source_identifier, description, geo_filter, country_code)
     
     return mapping
 

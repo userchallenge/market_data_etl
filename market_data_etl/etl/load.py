@@ -377,7 +377,7 @@ class EconomicETLOrchestrator:
         self.transformer = EconomicDataTransformer()
         self.loader = EconomicDataLoader(self.db_manager)
     
-    def run_eurostat_etl(self, data_code: str, from_date: str, to_date: str = None) -> Dict[str, Any]:
+    def run_eurostat_etl(self, data_code: str, from_date: str, to_date: str = None, geo_filter: str = None, indicator_name: str = None) -> Dict[str, Any]:
         """
         Run complete Eurostat data ETL pipeline.
         
@@ -385,6 +385,8 @@ class EconomicETLOrchestrator:
             data_code: Eurostat dataset code
             from_date: Start date for data
             to_date: End date for data (defaults to today if not specified)
+            geo_filter: Geographic filter (e.g., "SE" for Sweden, None for default Euro Area)
+            indicator_name: Intended indicator name (e.g., "inflation_monthly_sweden")
             
         Returns:
             ETL results with statistics from each phase
@@ -401,7 +403,7 @@ class EconomicETLOrchestrator:
         try:
             # EXTRACT phase
             self.logger.info(f"Extract phase: extracting Eurostat data for {data_code}")
-            raw_data = self.extractor.extract_eurostat_data(data_code, from_date, to_date)
+            raw_data = self.extractor.extract_eurostat_data(data_code, from_date, to_date, geo_filter)
             etl_results['phases']['extract'] = {
                 'status': 'completed',
                 'timestamp': raw_data.get('extraction_timestamp')
@@ -409,7 +411,7 @@ class EconomicETLOrchestrator:
             
             # TRANSFORM phase
             self.logger.info(f"Transform phase: transforming Eurostat data for {data_code}")
-            transformed_data = self.transformer.transform_eurostat_data(raw_data)
+            transformed_data = self.transformer.transform_eurostat_data(raw_data, indicator_name)
             etl_results['phases']['transform'] = {
                 'status': 'completed',
                 'data_points_count': len(transformed_data.get('data_points', [])),
@@ -436,6 +438,81 @@ class EconomicETLOrchestrator:
             etl_results['error'] = str(e)
             etl_results['pipeline_end'] = datetime.now(timezone.utc).isoformat()
             self.logger.error(f"Eurostat ETL pipeline failed for {data_code}: {e}")
+            raise e
+        
+        return etl_results
+    
+    def run_oecd_etl(
+        self, 
+        series_key: str, 
+        country_code: str, 
+        from_date: str, 
+        to_date: str = None,
+        indicator_name: str = None
+    ) -> Dict[str, Any]:
+        """
+        Run complete OECD data ETL pipeline.
+        
+        Args:
+            series_key: OECD series key (e.g., "PRICES_CPI")  
+            country_code: ISO country code (e.g., "GBR" for Great Britain)
+            from_date: Start date for data
+            to_date: End date for data (defaults to today if not specified)
+            indicator_name: Intended indicator name (e.g., "inflation_monthly_gb")
+            
+        Returns:
+            ETL results with statistics from each phase
+        """
+        indicator_id = f"{series_key}_{country_code}"
+        self.logger.info(f"Starting OECD ETL pipeline for {indicator_id}")
+        
+        etl_results = {
+            'source': 'oecd',
+            'series_key': series_key,
+            'country_code': country_code,
+            'indicator_id': indicator_id,
+            'pipeline_start': datetime.now(timezone.utc).isoformat(),
+            'phases': {}
+        }
+        
+        try:
+            # EXTRACT phase
+            self.logger.info(f"Extract phase: extracting OECD data for {indicator_id}")
+            raw_data = self.extractor.extract_oecd_data(series_key, country_code, from_date, to_date)
+            etl_results['phases']['extract'] = {
+                'status': 'completed',
+                'timestamp': raw_data.get('extraction_timestamp')
+            }
+            
+            # TRANSFORM phase
+            self.logger.info(f"Transform phase: transforming OECD data for {indicator_id}")
+            transformed_data = self.transformer.transform_oecd_data(raw_data, indicator_name)
+            etl_results['phases']['transform'] = {
+                'status': 'completed',
+                'records_processed': len(transformed_data.get('data_points', []))
+            }
+            
+            # LOAD phase
+            self.logger.info(f"Load phase: storing OECD data for {indicator_id}")
+            load_results = self.loader.load_economic_data(transformed_data)
+            etl_results['phases']['load'] = {
+                'status': 'completed',
+                'loaded_records': load_results.get('loaded_records', {}),
+                'errors': load_results.get('errors', []),
+                'timestamp': load_results.get('loading_timestamp')
+            }
+            
+            etl_results['status'] = 'completed'
+            etl_results['pipeline_end'] = datetime.now(timezone.utc).isoformat()
+            
+            total_records = load_results.get('loaded_records', {}).get('data_points', 0)
+            self.logger.info(f"✅ OECD ETL pipeline completed for {indicator_id}: {total_records} records processed")
+            
+        except Exception as e:
+            etl_results['status'] = 'failed'
+            etl_results['error'] = str(e)
+            etl_results['pipeline_end'] = datetime.now(timezone.utc).isoformat()
+            self.logger.error(f"OECD ETL pipeline failed for {indicator_id}: {e}")
             raise e
         
         return etl_results

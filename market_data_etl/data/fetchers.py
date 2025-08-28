@@ -549,7 +549,7 @@ class EconomicDataFetcher(DataFetcher):
         super().__init__()
         self.logger = get_logger(__name__)
     
-    def fetch_eurostat_json(self, data_code: str, from_date: str, to_date: str = None) -> Dict[str, Any]:
+    def fetch_eurostat_json(self, data_code: str, from_date: str, to_date: str = None, geo_filter: str = None) -> Dict[str, Any]:
         """
         Fetch data from Eurostat API for European economic statistics.
         
@@ -557,6 +557,7 @@ class EconomicDataFetcher(DataFetcher):
             data_code: Eurostat dataset code (e.g., "prc_hicp_midx")
             from_date: Start date in 'YYYY-MM-DD' format
             to_date: End date in 'YYYY-MM-DD' format (defaults to today if not specified)
+            geo_filter: Geographic filter (e.g., "SE" for Sweden, defaults to "EU27_2020")
             
         Returns:
             Dictionary with raw JSON response
@@ -571,14 +572,15 @@ class EconomicDataFetcher(DataFetcher):
             else:
                 to_date_used = to_date
             
-            self.logger.info(f"Fetching Eurostat data for {data_code} from {from_date} to {to_date_used}")
+            geo_param = geo_filter if geo_filter else "EU27_2020"
+            self.logger.info(f"Fetching Eurostat data for {data_code} from {from_date} to {to_date_used}, geo={geo_param}")
             
             from_year_month = self._to_year_month(from_date)
             to_year_month = self._to_year_month(to_date_used)
             
             url = (
                 f"{config.api.eurostat_base_url}/{data_code}"
-                f"?geo=EU27_2020"
+                f"?geo={geo_param}"
                 f"&sinceTimePeriod={from_year_month}"
                 f"&untilTimePeriod={to_year_month}"
                 f"&format=JSON"
@@ -745,3 +747,63 @@ class EconomicDataFetcher(DataFetcher):
             # Fallback to current date
             today = date.today()
             return today.strftime("%Y-%m")
+    
+    def fetch_oecd_json(self, dataset: str, country_code: str, from_date: str, to_date: str = None) -> Dict[str, Any]:
+        """
+        Fetch data from OECD API for inflation statistics.
+        
+        Args:
+            dataset: OECD dataset code (e.g., "PRICES_CPI")
+            country_code: 3-letter country code (e.g., "GBR" for Great Britain)
+            from_date: Start date in 'YYYY-MM-DD' format
+            to_date: End date in 'YYYY-MM-DD' format (defaults to today if not specified)
+            
+        Returns:
+            Dictionary with raw JSON response
+            
+        Raises:
+            YahooFinanceError: If request fails after retries
+        """
+        def _fetch():
+            # Default to_date to today if not specified
+            if not to_date:
+                to_date_used = datetime.now().strftime('%Y-%m')
+            else:
+                to_date_used = self._to_year_month(to_date)
+            
+            from_year_month = self._to_year_month(from_date)
+            
+            self.logger.info(f"Fetching OECD data for {dataset}/{country_code} from {from_date} to {to_date_used}")
+            
+            # OECD API URL format for CPI annual rates
+            # Example: https://stats.oecd.org/SDMX-JSON/data/PRICES_CPI/GBR.CPALTT01.GY.M/all?startTime=2020-01
+            url = (
+                f"https://stats.oecd.org/SDMX-JSON/data/{dataset}/{country_code}.CPALTT01.GY.M/all"
+                f"?startTime={from_year_month}&endTime={to_date_used}&dimensionAtObservation=allDimensions"
+            )
+            
+            try:
+                response = requests.get(url, timeout=config.api.request_timeout)
+                response.raise_for_status()
+                
+                json_data = response.json()
+                
+                return {
+                    'source': 'oecd',
+                    'dataset': dataset,
+                    'country_code': country_code,
+                    'from_date': from_date,
+                    'to_date': to_date,
+                    'url': url,
+                    'extraction_timestamp': datetime.now(timezone.utc).isoformat(),
+                    'raw_data': json_data
+                }
+                
+            except requests.exceptions.RequestException as e:
+                raise YahooFinanceError(f"OECD API request failed: {e}")
+            except Exception as e:
+                if "JSONDecodeError" in str(type(e)):
+                    raise YahooFinanceError(f"OECD JSON decode error: {e}")
+                raise e
+        
+        return self._retry_with_backoff(_fetch)

@@ -349,12 +349,13 @@ class EconomicDataTransformer:
     def __init__(self):
         self.logger = get_logger(__name__)
     
-    def transform_eurostat_data(self, raw_data: Dict[str, Any]) -> Dict[str, Any]:
+    def transform_eurostat_data(self, raw_data: Dict[str, Any], intended_indicator_name: str = None) -> Dict[str, Any]:
         """
         Transform raw Eurostat data into standardized format.
         
         Args:
             raw_data: Raw data from EconomicDataExtractor
+            intended_indicator_name: Intended indicator name to use for mapping (e.g., 'inflation_monthly_sweden')
             
         Returns:
             Dictionary with transformed, standardized economic data
@@ -372,7 +373,11 @@ class EconomicDataTransformer:
             standardized_name = self._get_standardized_name('eurostat', data_code, name)
             
             # Get standardized mapping for this indicator
-            mapping = self._get_indicator_mapping('eurostat', data_code)
+            # If intended_indicator_name is provided, use direct lookup, otherwise use source/identifier lookup
+            if intended_indicator_name:
+                mapping = self._get_indicator_mapping_by_name(intended_indicator_name)
+            else:
+                mapping = self._get_indicator_mapping('eurostat', data_code)
             
             transformed_data = {
                 'name': mapping['name'],
@@ -384,6 +389,12 @@ class EconomicDataTransformer:
                 'transformation_timestamp': datetime.now(timezone.utc).isoformat(),
                 'data_points': data_points
             }
+            
+            # Add config information for country code determination
+            if 'geo_filter' in mapping:
+                transformed_data['geo_filter'] = mapping['geo_filter']
+            if 'country_code' in mapping:
+                transformed_data['country_code'] = mapping['country_code']
             
             self.logger.info(f"Transformed Eurostat data for {data_code}: {len(data_points)} data points")
             return transformed_data
@@ -431,6 +442,12 @@ class EconomicDataTransformer:
                 'data_points': data_points
             }
             
+            # Add config information for country code determination
+            if 'geo_filter' in mapping:
+                transformed_data['geo_filter'] = mapping['geo_filter']
+            if 'country_code' in mapping:
+                transformed_data['country_code'] = mapping['country_code']
+            
             self.logger.info(f"Transformed ECB data for {indicator_id}: {len(data_points)} data points")
             return transformed_data
             
@@ -473,7 +490,8 @@ class EconomicDataTransformer:
                         'unit': 'index',
                         'frequency': 'monthly',
                         'transformation_timestamp': datetime.now(timezone.utc).isoformat(),
-                        'data_points': data_points
+                        'data_points': data_points,
+                        'country_code': 'US'  # FRED data is US-specific
                     },
                     {
                         'name': 'inflation_monthly_us',
@@ -483,7 +501,8 @@ class EconomicDataTransformer:
                         'unit': 'percent',
                         'frequency': 'monthly',
                         'transformation_timestamp': datetime.now(timezone.utc).isoformat(),
-                        'data_points': rate_data_points
+                        'data_points': rate_data_points,
+                        'country_code': 'US'  # FRED data is US-specific
                     }
                 ]
                 
@@ -506,6 +525,12 @@ class EconomicDataTransformer:
                 'transformation_timestamp': datetime.now(timezone.utc).isoformat(),
                 'data_points': data_points
             }
+            
+            # Add config information for country code determination
+            if 'geo_filter' in mapping:
+                transformed_data['geo_filter'] = mapping['geo_filter']
+            if 'country_code' in mapping:
+                transformed_data['country_code'] = mapping['country_code']
             
             self.logger.info(f"Transformed FRED data for {series_id}: {len(data_points)} data points")
             return transformed_data
@@ -868,3 +893,158 @@ class EconomicDataTransformer:
                 })
         
         return inflation_rates
+    
+    def transform_oecd_data(self, raw_data: Dict[str, Any], intended_indicator_name: str = None) -> Dict[str, Any]:
+        """
+        Transform raw OECD data into standardized format.
+        
+        Args:
+            raw_data: Raw data from EconomicDataExtractor
+            intended_indicator_name: The intended indicator name (e.g., "inflation_monthly_gb")
+            
+        Returns:
+            Dictionary with transformed, standardized economic data
+        """
+        dataset = raw_data.get('dataset')
+        country_code = raw_data.get('country_code')
+        self.logger.info(f"Transforming OECD data for {dataset}/{country_code}")
+        
+        try:
+            json_data = raw_data.get('raw_data', {})
+            
+            # Extract time series data from OECD SDMX-JSON structure
+            data_points = self._parse_oecd_json(json_data)
+            
+            # Get standardized mapping for this indicator
+            if intended_indicator_name:
+                # Use the intended indicator name directly
+                mapping = self._get_indicator_mapping_by_name(intended_indicator_name)
+            else:
+                # Fallback to old logic for backwards compatibility
+                mapping = self._get_indicator_mapping('oecd', f"{dataset}_{country_code}")
+            
+            transformed_data = {
+                'name': mapping['name'],
+                'source': mapping['source'],
+                'source_identifier': mapping['source_identifier'],
+                'description': mapping['description'],
+                'unit': 'percent',  # OECD inflation data is in percentage form
+                'frequency': 'monthly',  # OECD CPI data is monthly
+                'transformation_timestamp': datetime.now(timezone.utc).isoformat(),
+                'data_points': data_points
+            }
+            
+            # Add config information for country code determination
+            if 'geo_filter' in mapping:
+                transformed_data['geo_filter'] = mapping['geo_filter']
+            if 'country_code' in mapping:
+                transformed_data['country_code'] = mapping['country_code']
+            
+            self.logger.info(f"Transformed OECD data for {dataset}/{country_code}: {len(data_points)} data points")
+            return transformed_data
+            
+        except Exception as e:
+            self.logger.error(f"Failed to transform OECD data for {dataset}/{country_code}: {e}")
+            raise e
+    
+    def _parse_oecd_json(self, json_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Parse OECD SDMX-JSON data structure into list of data points."""
+        data_points = []
+        
+        try:
+            # OECD SDMX-JSON structure: dataSets[0].observations contains the actual data
+            datasets = json_data.get('dataSets', [])
+            if not datasets:
+                self.logger.warning("No dataSets found in OECD JSON")
+                return data_points
+            
+            observations = datasets[0].get('observations', {})
+            
+            # Get time dimension from structure
+            structure = json_data.get('structure', {})
+            dimensions = structure.get('dimensions', {}).get('observation', [])
+            
+            # Find time dimension
+            time_dimension = None
+            for dim in dimensions:
+                if dim.get('id') == 'TIME_PERIOD':
+                    time_dimension = dim.get('values', [])
+                    break
+            
+            if not time_dimension:
+                self.logger.warning("No TIME_PERIOD dimension found in OECD data")
+                return data_points
+            
+            # Parse observations
+            for obs_key, obs_value in observations.items():
+                try:
+                    # obs_key is typically "0:0:0:time_index" format
+                    # Extract time index (last part)
+                    time_index = int(obs_key.split(':')[-1])
+                    
+                    if time_index < len(time_dimension):
+                        time_period = time_dimension[time_index]['id']
+                        
+                        # obs_value is a list, first element is the actual value
+                        if obs_value and obs_value[0] is not None:
+                            value = float(obs_value[0])
+                            
+                            # Parse OECD time format (YYYY-MM)
+                            parsed_date = self._parse_oecd_date(time_period)
+                            if parsed_date:
+                                data_points.append({
+                                    'date': parsed_date.isoformat(),
+                                    'value': round(value, 4)
+                                })
+                                
+                except (ValueError, TypeError, IndexError) as e:
+                    self.logger.debug(f"Skipping invalid OECD observation: {obs_key}={obs_value} ({e})")
+                    continue
+                    
+        except Exception as e:
+            self.logger.warning(f"Error parsing OECD JSON structure: {e}")
+        
+        return data_points
+    
+    def _parse_oecd_date(self, time_period: str) -> Optional[date]:
+        """Parse OECD time format to date."""
+        try:
+            # OECD typically uses YYYY-MM format
+            if '-' in time_period and len(time_period) == 7:
+                year, month = time_period.split('-')
+                return date(int(year), int(month), 1)
+            elif len(time_period) == 4 and time_period.isdigit():
+                # Annual format: 2023
+                return date(int(time_period), 1, 1)
+        except (ValueError, AttributeError):
+            pass
+        return None
+    
+    def _get_indicator_mapping_by_name(self, indicator_name: str) -> Dict[str, str]:
+        """
+        Get indicator mapping by direct name lookup from config.
+        
+        Args:
+            indicator_name: The indicator name to look up (e.g., 'inflation_monthly_sweden')
+            
+        Returns:
+            Dictionary with mapping information
+        """
+        if config.economic_indicators and indicator_name in config.economic_indicators:
+            indicator_config = config.economic_indicators[indicator_name]
+            mapping = {
+                'name': indicator_name,
+                'source': indicator_config['source'],
+                'source_identifier': indicator_config['source_identifier'],
+                'description': indicator_config.get('description', f'Economic indicator: {indicator_name}')
+            }
+            
+            # Include all config fields for country code determination
+            if 'geo_filter' in indicator_config:
+                mapping['geo_filter'] = indicator_config['geo_filter']
+            if 'country_code' in indicator_config:
+                mapping['country_code'] = indicator_config['country_code']
+                
+            return mapping
+        else:
+            raise ValueError(f"Indicator '{indicator_name}' not found in configuration")

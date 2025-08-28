@@ -7,3 +7,5 @@ unemployment_monthly_rate_us,fred,UNRATE,"US Unemployment Rate"
 inflation_index_monthly_us,fred,CPIAUCSL,"US Consumer Price Index (CPI)"
 interest_rate_monthly_us,fred,DFF,"US Federal Funds Rate"
 inflation_monthly_us,fred,CPIAUCSL_CALCULATED,US CPI (Monthly Rate of Change)
+inflation_monthly_sweden,eurostat,prc_hicp_manr,"Swedish Inflation (HICP, annual rate of change)"
+inflation_monthly_gb,oecd,PRICES_CPI,"Great Britain Inflation (CPI, annual rate of change)"

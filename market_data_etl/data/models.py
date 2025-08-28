@@ -528,6 +528,7 @@ class EconomicIndicator(Base):
     description = Column(String(200), nullable=False)  # human-readable description
     unit = Column(String(50))
     frequency = Column(Enum(Frequency), nullable=False, default=Frequency.MONTHLY)
+    country_code = Column(String(3), nullable=True)  # ISO 3166-1 alpha-2 country code
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     

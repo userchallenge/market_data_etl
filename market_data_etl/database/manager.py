@@ -1503,26 +1503,112 @@ class DatabaseManager:
             indicator.description = economic_data.get('description', indicator.description)
             indicator.unit = economic_data.get('unit', indicator.unit)
             indicator.frequency = self._parse_frequency(economic_data.get('frequency', 'monthly'))
+            
+            # Update country code if not already set or if new data provides it
+            country_code = self._determine_country_code(economic_data)
+            if country_code and not indicator.country_code:
+                indicator.country_code = country_code
+                self.logger.debug(f"Set country code {country_code} for existing indicator: {name}")
+            elif country_code and indicator.country_code != country_code:
+                indicator.country_code = country_code
+                self.logger.debug(f"Updated country code to {country_code} for indicator: {name}")
+            
             indicator.updated_at = datetime.now(timezone.utc)
             
             self.logger.debug(f"Updated existing economic indicator: {name}")
             return indicator
         
         # Create new indicator
+        country_code = self._determine_country_code(economic_data)
         indicator = EconomicIndicator(
             name=name,
             source=source or '',
             source_identifier=source_identifier or '',
             description=economic_data.get('description', ''),
             unit=economic_data.get('unit', ''),
-            frequency=self._parse_frequency(economic_data.get('frequency', 'monthly'))
+            frequency=self._parse_frequency(economic_data.get('frequency', 'monthly')),
+            country_code=country_code
         )
         session.add(indicator)
         session.flush()  # Get the ID
         
-        self.logger.debug(f"Created new economic indicator: {name} ({source}/{source_identifier})")
+        if country_code:
+            self.logger.debug(f"Created new economic indicator: {name} ({source}/{source_identifier}) with country code: {country_code}")
+        else:
+            self.logger.debug(f"Created new economic indicator: {name} ({source}/{source_identifier}) with no country code")
         
         return indicator
+    
+    def _determine_country_code(self, economic_data: Dict[str, Any]) -> Optional[str]:
+        """
+        Determine ISO 3166-1 alpha-2 country code from economic data.
+        
+        Args:
+            economic_data: Economic data dictionary with source and config info
+            
+        Returns:
+            Country code string or None if not determinable
+        """
+        name = economic_data.get('name', '')
+        source = economic_data.get('source', '')
+        
+        # Check for geo_filter (Eurostat specific)
+        geo_filter = economic_data.get('geo_filter')
+        if geo_filter:
+            # Map common geo filters to country codes
+            geo_mapping = {
+                'SE': 'SE',  # Sweden
+                'GB': 'GB',  # Great Britain  
+                'DE': 'DE',  # Germany
+                'FR': 'FR',  # France
+                'IT': 'IT',  # Italy
+                'ES': 'ES',  # Spain
+                'NL': 'NL',  # Netherlands
+                'BE': 'BE',  # Belgium
+                'AT': 'AT',  # Austria
+                'FI': 'FI',  # Finland
+                'IE': 'IE',  # Ireland
+                'PT': 'PT',  # Portugal
+                'DK': 'DK',  # Denmark
+                'EU27_2020': 'EA',  # Euro Area
+                'EA19': 'EA',  # Euro Area 19
+                'EA': 'EA'   # Euro Area
+            }
+            return geo_mapping.get(geo_filter, geo_filter[:2] if len(geo_filter) == 2 else None)
+        
+        # Check for explicit country_code in config
+        country_code = economic_data.get('country_code')
+        if country_code:
+            # Map OECD 3-letter codes to ISO alpha-2
+            if country_code == 'GBR':
+                return 'GB'
+            elif country_code == 'USA':
+                return 'US'
+            elif len(country_code) == 2:
+                return country_code  # Already alpha-2
+        
+        # Determine by source and indicator name patterns
+        if source == 'fred':
+            return 'US'  # FRED is US Federal Reserve data
+        elif source == 'eurostat':
+            if 'euro' in name.lower():
+                return 'EA'  # Euro Area
+            else:
+                return 'EA'  # Default eurostat without geo_filter to Euro Area
+        elif source == 'ecb':
+            return 'EA'  # European Central Bank data
+        
+        # Pattern-based detection from indicator names
+        if '_us' in name.lower() or 'us_' in name.lower():
+            return 'US'
+        elif '_euro' in name.lower() or 'euro_' in name.lower():
+            return 'EA'
+        elif '_sweden' in name.lower() or 'sweden_' in name.lower():
+            return 'SE'
+        elif '_gb' in name.lower() or 'gb_' in name.lower():
+            return 'GB'
+        
+        return None  # Unable to determine
     
     def _store_economic_data_points(
         self,
