@@ -364,9 +364,9 @@ def fetch_financial_statements_command(
             statements_count = transform_info.get('statements_count', 0)
             events_count = transform_info.get('events_count', 0)
             if events_count > 0:
-                print(f"  • Transform: {statements_count} statement types + {events_count} events")
+                print(f"  • Transform: {statements_count} statement types (annual, quarterly, TTM) + {events_count} events")
             else:
-                print(f"  • Transform: {statements_count} statement types")
+                print(f"  • Transform: {statements_count} statement types (annual, quarterly, TTM)")
             
             # Show detailed load results
             print(f"  • Load Results:")

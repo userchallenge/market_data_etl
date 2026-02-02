@@ -183,19 +183,22 @@ class FinancialDataTransformer:
         """Transform raw financial statement data using standardizer."""
         statements = {}
         
-        # Map of statement types to their annual and quarterly sources
+        # Map of statement types to their annual, quarterly, and TTM sources
         statement_mapping = {
             'income_stmt': {
                 'annual': 'income_stmt',
-                'quarterly': 'quarterly_income_stmt'
+                'quarterly': 'quarterly_income_stmt',
+                'ttm': 'ttm_income_stmt'
             },
             'balance_sheet': {
                 'annual': 'balance_sheet',
                 'quarterly': 'quarterly_balance_sheet'
+                # Note: No TTM balance sheet - balance sheets are point-in-time
             },
             'cash_flow': {
                 'annual': 'cash_flow', 
-                'quarterly': 'quarterly_cash_flow'
+                'quarterly': 'quarterly_cash_flow',
+                'ttm': 'ttm_cash_flow'
             }
         }
         
@@ -211,9 +214,16 @@ class FinancialDataTransformer:
                     data_sources.get(source_mapping['quarterly'], {}).get('raw_data')
                 )
                 
-                # Standardize using the financial standardizer
+                # Get TTM data (if available for this statement type)
+                ttm_data = {}
+                if 'ttm' in source_mapping:
+                    ttm_data = self._convert_dataframe_to_dict(
+                        data_sources.get(source_mapping['ttm'], {}).get('raw_data')
+                    )
+                
+                # Standardize using the financial standardizer (extended for TTM)
                 standardized = self._standardize_statement_data(
-                    statement_type, annual_data, quarterly_data, currency
+                    statement_type, annual_data, quarterly_data, currency, ttm_data
                 )
                 
                 if standardized:
@@ -225,8 +235,37 @@ class FinancialDataTransformer:
         return statements
     
     def _convert_dataframe_to_dict(self, data: Any) -> Dict[str, Any]:
-        """Convert yfinance DataFrame to dictionary format for standardizer."""
-        if data is None or not isinstance(data, pd.DataFrame) or data.empty:
+        """Convert yfinance DataFrame or TTM dict to dictionary format for standardizer."""
+        if data is None:
+            return {}
+        
+        # Handle TTM data which comes as a nested dict
+        if isinstance(data, dict):
+            # TTM data format: {metric_name: {date: value}}
+            # Need to convert to: {date: {metric_name: value}}
+            if not data:
+                return {}
+            
+            result = {}
+            # Get all unique dates from all metrics
+            all_dates = set()
+            for metric_data in data.values():
+                if isinstance(metric_data, dict):
+                    all_dates.update(metric_data.keys())
+            
+            # Reorganize by date
+            for date_key in all_dates:
+                date_str = date_key.strftime('%Y-%m-%d') if hasattr(date_key, 'strftime') else str(date_key)
+                result[date_str] = {}
+                
+                for metric_name, metric_data in data.items():
+                    if isinstance(metric_data, dict) and date_key in metric_data:
+                        result[date_str][metric_name] = metric_data[date_key]
+            
+            return result
+        
+        # Handle DataFrame data (annual/quarterly)
+        if not isinstance(data, pd.DataFrame) or data.empty:
             return {}
         
         # yfinance returns DataFrame with dates as columns and metrics as index
@@ -257,7 +296,8 @@ class FinancialDataTransformer:
         statement_type: str,
         annual_data: Dict[str, Any],
         quarterly_data: Dict[str, Any],
-        currency: str
+        currency: str,
+        ttm_data: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """Standardize financial statement data using the standardizer."""
         standardized = {}
@@ -289,6 +329,19 @@ class FinancialDataTransformer:
             
             if quarterly_std:
                 standardized['quarterly'] = quarterly_std
+        
+        # Standardize TTM data
+        if ttm_data:
+            if statement_type == 'income_stmt':
+                ttm_std = self.standardizer.standardize_income_statement(ttm_data, currency)
+            elif statement_type == 'cash_flow':
+                ttm_std = self.standardizer.standardize_cash_flow(ttm_data, currency)
+            else:
+                # No TTM for balance sheet (point-in-time data)
+                ttm_std = {}
+            
+            if ttm_std:
+                standardized['ttm'] = ttm_std
         
         return standardized
     

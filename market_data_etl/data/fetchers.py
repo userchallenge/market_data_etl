@@ -360,7 +360,8 @@ class FundamentalsFetcher(DataFetcher):
         'quarterly_balance_sheet': 'Quarterly balance sheet',
         'cashflow': 'Annual cash flow statement',
         'quarterly_cashflow': 'Quarterly cash flow statement',
-        'earnings': 'Earnings data',
+        'ttm_income_stmt': 'TTM income statement',
+        'ttm_cash_flow': 'TTM cash flow statement',
         'calendar': 'Financial calendar',
         'info': 'Company information and key statistics',
         'recommendations': 'Analyst recommendations',
@@ -403,8 +404,6 @@ class FundamentalsFetcher(DataFetcher):
                             data = yf_ticker.info
                         elif data_type == 'calendar':
                             data = yf_ticker.calendar
-                        elif data_type == 'earnings':
-                            data = yf_ticker.earnings
                         elif data_type == 'recommendations':
                             data = yf_ticker.recommendations
                         elif data_type == 'institutional_holders':

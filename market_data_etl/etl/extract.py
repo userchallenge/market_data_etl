@@ -33,6 +33,8 @@ class FinancialDataExtractor(DataFetcher):
         'quarterly_balance_sheet': 'quarterly_balance_sheet',
         'cash_flow': 'cashflow',
         'quarterly_cash_flow': 'quarterly_cashflow',
+        'ttm_income_stmt': 'ttm_income_stmt',
+        'ttm_cash_flow': 'ttm_cash_flow',
         'company_info': 'info',
         'calendar_events': 'events_calendar'
     }
@@ -74,9 +76,13 @@ class FinancialDataExtractor(DataFetcher):
                     try:
                         self.logger.debug(f"Extracting {data_type} from {yf_attribute}")
                         
-                        # Handle special case for calendar/events data
+                        # Handle special cases for complex data
                         if data_type == 'calendar_events':
                             raw_source_data = self.fundamentals_fetcher.fetch_events_calendar(ticker)
+                        elif data_type.startswith('ttm_'):
+                            # Use FundamentalsFetcher for comprehensive TTM data access
+                            fundamentals_data = self.fundamentals_fetcher.fetch_fundamentals(ticker)
+                            raw_source_data = fundamentals_data.get(data_type)
                         else:
                             # Get raw data from yfinance
                             raw_source_data = getattr(yf_ticker, yf_attribute)

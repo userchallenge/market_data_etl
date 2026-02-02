@@ -550,6 +550,13 @@ class DatabaseManager:
                 session, instrument_id, period_date, period_info, 'quarterly'
             )
         
+        # Store TTM data
+        ttm_data = income_data.get('ttm', {})
+        for period_date, period_info in ttm_data.items():
+            count += self._store_single_income_statement(
+                session, instrument_id, period_date, period_info, 'ttm'
+            )
+        
         return count
     
     def _store_single_income_statement(
@@ -772,6 +779,13 @@ class DatabaseManager:
         for period_date, period_info in quarterly_data.items():
             count += self._store_single_cash_flow(
                 session, instrument_id, period_date, period_info, 'quarterly'
+            )
+        
+        # Store TTM data
+        ttm_data = cashflow_data.get('ttm', {})
+        for period_date, period_info in ttm_data.items():
+            count += self._store_single_cash_flow(
+                session, instrument_id, period_date, period_info, 'ttm'
             )
         
         return count
