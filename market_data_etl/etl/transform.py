@@ -50,7 +50,8 @@ class FinancialDataTransformer:
             'currency': currency,
             'company_info': company_info,
             'transformation_timestamp': datetime.now(timezone.utc).isoformat(),
-            'statements': {}
+            'statements': {},
+            'events': []
         }
         
         data_sources = raw_data.get('data_sources', {})
@@ -59,6 +60,11 @@ class FinancialDataTransformer:
         statements_transformed = self._transform_financial_statements(data_sources, currency)
         if statements_transformed:
             transformed_data['statements'] = statements_transformed
+        
+        # Transform events/calendar data
+        events_transformed = self._transform_events_calendar(data_sources, raw_data.get('ticker'))
+        if events_transformed:
+            transformed_data['events'] = events_transformed
         
         # Calculate derived metrics if we have sufficient data
         if len(transformed_data['statements']) >= 2:
@@ -69,6 +75,7 @@ class FinancialDataTransformer:
         self.logger.info(
             f"Transformation complete for {raw_data.get('ticker')}: "
             f"{len(transformed_data['statements'])} statements, "
+            f"{len(transformed_data['events'])} events, "
             f"{'with' if 'derived_metrics' in transformed_data else 'without'} derived metrics"
         )
         
@@ -333,6 +340,204 @@ class FinancialDataTransformer:
             df['date'] = [d.date() for d in df['date']]
         
         return df
+    
+    def _transform_events_calendar(self, data_sources: Dict[str, Any], ticker: str) -> List[Dict[str, Any]]:
+        """
+        Transform raw calendar/events data into standardized event records.
+        
+        Args:
+            data_sources: Raw data sources from extraction
+            ticker: Stock ticker symbol
+            
+        Returns:
+            List of standardized event dictionaries
+        """
+        events = []
+        
+        if 'calendar_events' not in data_sources:
+            return events
+        
+        calendar_raw = data_sources['calendar_events'].get('raw_data', {})
+        
+        if not calendar_raw:
+            self.logger.debug(f"No calendar events data for {ticker}")
+            return events
+        
+        self.logger.debug(f"Processing calendar events for {ticker}")
+        
+        # Process calendar data (upcoming earnings)
+        if 'calendar' in calendar_raw:
+            calendar_data = calendar_raw['calendar']
+            events.extend(self._process_calendar_data(calendar_data, ticker))
+        
+        # Process earnings dates data (historical and upcoming)
+        if 'earnings_dates' in calendar_raw:
+            earnings_dates = calendar_raw['earnings_dates']
+            events.extend(self._process_earnings_dates(earnings_dates, ticker))
+        
+        # Process historical earnings data
+        if 'earnings' in calendar_raw:
+            earnings_data = calendar_raw['earnings']
+            events.extend(self._process_historical_earnings(earnings_data, ticker))
+        
+        self.logger.debug(f"Transformed {len(events)} events for {ticker}")
+        return events
+    
+    def _process_calendar_data(self, calendar_data: Dict[str, Any], ticker: str) -> List[Dict[str, Any]]:
+        """Process calendar data from yfinance into standardized events."""
+        events = []
+        
+        try:
+            # calendar_data is typically a dict with date keys
+            for date_key, event_info in calendar_data.items():
+                if isinstance(event_info, dict):
+                    event = {
+                        'ticker_symbol': ticker,
+                        'event_type': 'earnings',
+                        'event_date': self._parse_event_date(date_key),
+                        'description': event_info.get('description', 'Earnings announcement'),
+                        'estimated_eps': self._safe_float(event_info.get('estimated_eps')),
+                        'event_time': event_info.get('time', 'Before Market Open'),
+                        'source': 'calendar'
+                    }
+                    if event['event_date']:
+                        events.append(event)
+        
+        except Exception as e:
+            self.logger.debug(f"Error processing calendar data: {e}")
+        
+        return events
+    
+    def _process_earnings_dates(self, earnings_dates: Dict[str, Any], ticker: str) -> List[Dict[str, Any]]:
+        """Process earnings dates data into standardized events."""
+        events = []
+        
+        try:
+            # earnings_dates is typically a dict with date keys and earnings info
+            for date_key, earnings_info in earnings_dates.items():
+                if isinstance(earnings_info, dict):
+                    event = {
+                        'ticker_symbol': ticker,
+                        'event_type': 'earnings',
+                        'event_date': self._parse_event_date(date_key),
+                        'description': 'Earnings release',
+                        'estimated_eps': self._safe_float(earnings_info.get('Estimate')),
+                        'reported_eps': self._safe_float(earnings_info.get('Reported')),
+                        'eps_surprise': self._calculate_eps_surprise(
+                            earnings_info.get('Reported'), 
+                            earnings_info.get('Estimate')
+                        ),
+                        'event_time': earnings_info.get('Time', 'Before Market Open'),
+                        'source': 'earnings_dates'
+                    }
+                    if event['event_date']:
+                        events.append(event)
+        
+        except Exception as e:
+            self.logger.debug(f"Error processing earnings dates: {e}")
+        
+        return events
+    
+    def _process_historical_earnings(self, earnings_data: Dict[str, Any], ticker: str) -> List[Dict[str, Any]]:
+        """Process historical earnings data into events."""
+        events = []
+        
+        try:
+            # earnings_data is typically historical data with quarters/years
+            for period_key, period_data in earnings_data.items():
+                if isinstance(period_data, dict):
+                    event = {
+                        'ticker_symbol': ticker,
+                        'event_type': 'earnings_historical',
+                        'event_date': self._parse_earnings_period(period_key),
+                        'description': f'Historical earnings - {period_key}',
+                        'reported_eps': self._safe_float(period_data.get('EPS')),
+                        'source': 'historical_earnings'
+                    }
+                    if event['event_date']:
+                        events.append(event)
+        
+        except Exception as e:
+            self.logger.debug(f"Error processing historical earnings: {e}")
+        
+        return events
+    
+    def _parse_event_date(self, date_str: str) -> Optional[date]:
+        """Parse event date from various string formats."""
+        if not date_str:
+            return None
+        
+        try:
+            # Handle pandas timestamp string format
+            if 'Timestamp' in str(date_str):
+                # Extract date from Timestamp string
+                import re
+                match = re.search(r"'(\d{4}-\d{2}-\d{2})", str(date_str))
+                if match:
+                    date_str = match.group(1)
+            
+            # Try standard date parsing
+            if isinstance(date_str, str):
+                # Common date formats
+                for fmt in ['%Y-%m-%d', '%m/%d/%Y', '%d/%m/%Y', '%Y.%m.%d']:
+                    try:
+                        return datetime.strptime(date_str, fmt).date()
+                    except ValueError:
+                        continue
+        
+        except Exception as e:
+            self.logger.debug(f"Could not parse event date '{date_str}': {e}")
+        
+        return None
+    
+    def _parse_earnings_period(self, period_str: str) -> Optional[date]:
+        """Parse earnings period (quarter/year) into approximate date."""
+        if not period_str:
+            return None
+        
+        try:
+            # Handle quarterly data (e.g., "Q1 2024", "2024-Q1")
+            if 'Q' in str(period_str):
+                import re
+                match = re.search(r'Q(\d)\s*(\d{4})|(\d{4})\s*Q(\d)', str(period_str))
+                if match:
+                    if match.group(1) and match.group(2):  # Q1 2024 format
+                        quarter, year = int(match.group(1)), int(match.group(2))
+                    else:  # 2024 Q1 format
+                        year, quarter = int(match.group(3)), int(match.group(4))
+                    
+                    # Map quarter to approximate end date
+                    quarter_end_months = {1: 3, 2: 6, 3: 9, 4: 12}
+                    month = quarter_end_months.get(quarter, 12)
+                    return date(year, month, 1)  # Use first day of end month
+            
+            # Handle yearly data (e.g., "2024")
+            if period_str.isdigit() and len(period_str) == 4:
+                return date(int(period_str), 12, 31)  # End of year
+        
+        except Exception as e:
+            self.logger.debug(f"Could not parse earnings period '{period_str}': {e}")
+        
+        return None
+    
+    def _safe_float(self, value: Any) -> Optional[float]:
+        """Safely convert value to float."""
+        if value is None or value == '':
+            return None
+        try:
+            return float(value)
+        except (ValueError, TypeError):
+            return None
+    
+    def _calculate_eps_surprise(self, reported: Any, estimated: Any) -> Optional[float]:
+        """Calculate EPS surprise (reported - estimated)."""
+        reported_float = self._safe_float(reported)
+        estimated_float = self._safe_float(estimated)
+        
+        if reported_float is not None and estimated_float is not None:
+            return reported_float - estimated_float
+        
+        return None
 
 
 class EconomicDataTransformer:

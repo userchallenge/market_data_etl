@@ -11,7 +11,7 @@ import pandas as pd
 
 from ..utils.logging import get_logger
 from ..database.manager import DatabaseManager
-from ..data.models import Instrument, Price, IncomeStatement, BalanceSheet, CashFlow, FinancialRatio
+from ..data.models import Instrument, Price, IncomeStatement, BalanceSheet, CashFlow, FinancialRatio, Event
 
 
 class FinancialDataLoader:
@@ -64,6 +64,12 @@ class FinancialDataLoader:
             
             # Store all data using the unified interface
             storage_counts = self.db_manager.store_financial_data(ticker, financial_data_to_store)
+            
+            # Store events data if available
+            events_data = transformed_data.get('events', [])
+            if events_data:
+                events_count = self._load_events_data(ticker, events_data)
+                storage_counts['events'] = events_count
             
             # Map the storage counts to our loading results format
             loading_results['loaded_records'] = storage_counts
@@ -138,6 +144,75 @@ class FinancialDataLoader:
         except Exception as e:
             self.logger.error(f"Failed to load price data for {ticker}: {e}")
             return 0
+    
+    def _load_events_data(self, ticker: str, events_data: List[Dict[str, Any]]) -> int:
+        """
+        Load transformed events data into database.
+        
+        Args:
+            ticker: Stock ticker symbol
+            events_data: List of transformed event dictionaries
+            
+        Returns:
+            Number of events loaded
+        """
+        if not events_data:
+            return 0
+        
+        loaded_count = 0
+        
+        try:
+            self.logger.info(f"Loading {len(events_data)} events for {ticker}")
+            
+            # Get or create instrument
+            instrument = self.db_manager.get_or_create_instrument(ticker, {})
+            
+            # Use session context manager
+            with self.db_manager.get_session() as session:
+                for event_data in events_data:
+                    try:
+                        # Check for duplicate events (same ticker, type, date)
+                        existing_event = session.query(Event).filter_by(
+                            ticker_symbol=ticker,
+                            event_type=event_data.get('event_type'),
+                            event_date=event_data.get('event_date')
+                        ).first()
+                        
+                        if not existing_event:
+                            # Create Event object
+                            event = Event(
+                                instrument_id=instrument.id,
+                                ticker_symbol=ticker,
+                                event_type=event_data.get('event_type', 'unknown'),
+                                event_date=event_data.get('event_date'),
+                                event_time=event_data.get('event_time'),
+                                description=event_data.get('description'),
+                                estimated_eps=event_data.get('estimated_eps'),
+                                reported_eps=event_data.get('reported_eps'),
+                                eps_surprise=event_data.get('eps_surprise'),
+                                dividend_amount=event_data.get('dividend_amount'),
+                                dividend_currency=event_data.get('dividend_currency'),
+                                split_ratio=event_data.get('split_ratio')
+                            )
+                            
+                            session.add(event)
+                            loaded_count += 1
+                        else:
+                            self.logger.debug(f"Event already exists: {event_data.get('event_type')} on {event_data.get('event_date')}")
+                        
+                    except Exception as e:
+                        self.logger.warning(f"Failed to load event {event_data}: {e}")
+                        continue
+                
+                # Commit all events
+                session.commit()
+            
+            self.logger.info(f"Successfully loaded {loaded_count} events for {ticker}")
+            return loaded_count
+            
+        except Exception as e:
+            self.logger.error(f"Failed to load events data for {ticker}: {e}")
+            return 0
 
 
 class ETLOrchestrator:
@@ -196,6 +271,7 @@ class ETLOrchestrator:
             etl_results['phases']['transform'] = {
                 'status': 'completed',
                 'statements_count': len(transformed_data.get('statements', {})),
+                'events_count': len(transformed_data.get('events', [])),
                 'timestamp': transformed_data.get('transformation_timestamp')
             }
             

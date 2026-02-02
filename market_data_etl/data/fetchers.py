@@ -535,6 +535,83 @@ class FundamentalsFetcher(DataFetcher):
         else:
             # Convert other types to string
             return str(data)
+    
+    def fetch_events_calendar(self, ticker: str) -> Dict[str, Any]:
+        """
+        Fetch enhanced calendar and earnings dates data using yfinance 1.1.0+ features.
+        
+        Args:
+            ticker: Stock ticker symbol
+            
+        Returns:
+            Dictionary with calendar and earnings dates data
+            
+        Raises:
+            YahooFinanceError: If data fetch fails after retries
+        """
+        def _fetch():
+            self.logger.info(f"Fetching events and calendar data for {ticker}")
+            
+            try:
+                yf_ticker = yf.Ticker(ticker)
+                
+                results = {}
+                successful_fetches = []
+                failed_fetches = []
+                
+                # Fetch calendar data
+                try:
+                    calendar_data = yf_ticker.calendar
+                    if self._is_valid_data(calendar_data):
+                        if isinstance(calendar_data, pd.DataFrame) and not calendar_data.empty:
+                            results['calendar'] = self._prepare_for_json_storage(calendar_data.to_dict('index'))
+                            successful_fetches.append('calendar')
+                        elif isinstance(calendar_data, dict) and calendar_data:
+                            results['calendar'] = self._prepare_for_json_storage(calendar_data)
+                            successful_fetches.append('calendar')
+                except Exception as e:
+                    failed_fetches.append(f"calendar: {str(e)}")
+                    self.logger.debug(f"Failed to fetch calendar: {e}")
+                
+                # Fetch earnings dates (new in yfinance 1.1.0)
+                try:
+                    # Check if get_earnings_dates method exists (yfinance 1.1.0+)
+                    if hasattr(yf_ticker, 'get_earnings_dates'):
+                        earnings_dates = yf_ticker.get_earnings_dates()
+                        if self._is_valid_data(earnings_dates):
+                            if isinstance(earnings_dates, pd.DataFrame) and not earnings_dates.empty:
+                                results['earnings_dates'] = self._prepare_for_json_storage(earnings_dates.to_dict('index'))
+                                successful_fetches.append('earnings_dates')
+                    else:
+                        self.logger.debug("get_earnings_dates method not available - requires yfinance 1.1.0+")
+                except Exception as e:
+                    failed_fetches.append(f"earnings_dates: {str(e)}")
+                    self.logger.debug(f"Failed to fetch earnings dates: {e}")
+                
+                # Note: Skipping deprecated yf_ticker.earnings API
+                # The earnings data is better obtained from earnings_dates above
+                
+                if not results:
+                    self.logger.info(f"No events/calendar data found for ticker {ticker}")
+                    return {}
+                
+                self.logger.info(
+                    f"Successfully fetched {len(successful_fetches)} event data types for {ticker}: "
+                    f"{', '.join(successful_fetches)}"
+                )
+                
+                if failed_fetches:
+                    self.logger.debug(f"Failed to fetch {len(failed_fetches)} event data types: {'; '.join(failed_fetches)}")
+                
+                return results
+                
+            except Exception as e:
+                if "No data found" in str(e) or "not found" in str(e).lower():
+                    self.logger.info(f"No events/calendar data available for ticker {ticker}")
+                    return {}
+                raise e
+        
+        return self._retry_with_backoff(_fetch)
 
 
 class EconomicDataFetcher(DataFetcher):

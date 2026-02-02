@@ -24,7 +24,7 @@ from ..data.models import (
     Base, Instrument, Price, IncomeStatement, BalanceSheet, CashFlow, FinancialRatio,
     Portfolio, PortfolioHolding, Transaction, InstrumentType, TransactionType,
     EconomicIndicator, EconomicIndicatorData, Threshold, Frequency, ThresholdCategory,
-    AlignedDailyData
+    AlignedDailyData, Event
 )
 
 
@@ -1073,6 +1073,9 @@ class DatabaseManager:
             cashflow_count = session.query(CashFlow).filter(CashFlow.instrument_id == instrument.id).count()
             ratios_count = session.query(FinancialRatio).filter(FinancialRatio.instrument_id == instrument.id).count()
             
+            # Get events count
+            events_count = session.query(Event).filter(Event.instrument_id == instrument.id).count()
+            
             return {
                 'ticker': ticker,
                 'exists': True,
@@ -1096,6 +1099,9 @@ class DatabaseManager:
                     'balance_sheets': balance_count,
                     'cash_flows': cashflow_count,
                     'financial_ratios': ratios_count
+                },
+                'events': {
+                    'count': events_count
                 }
             }
     

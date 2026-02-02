@@ -12,7 +12,7 @@ import pandas as pd
 
 from ..utils.logging import get_logger
 from ..utils.exceptions import YahooFinanceError
-from ..data.fetchers import DataFetcher, PriceFetcher
+from ..data.fetchers import DataFetcher, PriceFetcher, FundamentalsFetcher
 
 
 class FinancialDataExtractor(DataFetcher):
@@ -33,11 +33,13 @@ class FinancialDataExtractor(DataFetcher):
         'quarterly_balance_sheet': 'quarterly_balance_sheet',
         'cash_flow': 'cashflow',
         'quarterly_cash_flow': 'quarterly_cashflow',
-        'company_info': 'info'
+        'company_info': 'info',
+        'calendar_events': 'events_calendar'
     }
     
     def __init__(self):
         super().__init__()
+        self.fundamentals_fetcher = FundamentalsFetcher()
     
     def extract_financial_data(self, ticker: str) -> Dict[str, Any]:
         """
@@ -72,8 +74,12 @@ class FinancialDataExtractor(DataFetcher):
                     try:
                         self.logger.debug(f"Extracting {data_type} from {yf_attribute}")
                         
-                        # Get raw data from yfinance
-                        raw_source_data = getattr(yf_ticker, yf_attribute)
+                        # Handle special case for calendar/events data
+                        if data_type == 'calendar_events':
+                            raw_source_data = self.fundamentals_fetcher.fetch_events_calendar(ticker)
+                        else:
+                            # Get raw data from yfinance
+                            raw_source_data = getattr(yf_ticker, yf_attribute)
                         
                         # Store raw data without any transformation
                         if self._is_valid_extraction(raw_source_data):

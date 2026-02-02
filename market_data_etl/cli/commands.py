@@ -282,6 +282,13 @@ def db_info_command(ticker: str) -> int:
         print(f"  Cash Flow Statements: {statements['cash_flows']}")
         print(f"  Financial Ratios: {statements['financial_ratios']}")
         
+        # Events data info
+        events = info.get('events', {})
+        events_count = events.get('count', 0)
+        if events_count > 0:
+            print(f"\nEvents & Calendar:")
+            print(f"  Events: {events_count}")
+        
         total_financial = sum([
             statements['income_statements'],
             statements['balance_sheets'], 
@@ -353,7 +360,13 @@ def fetch_financial_statements_command(
             logger.info(f"Completed financial data fetch for {ticker}")
             print(f"📊 Pipeline Summary:")
             print(f"  • Extract: {etl_results['phases']['extract']['data_sources_count']} data sources")
-            print(f"  • Transform: {etl_results['phases']['transform']['statements_count']} statement types")
+            transform_info = etl_results['phases']['transform']
+            statements_count = transform_info.get('statements_count', 0)
+            events_count = transform_info.get('events_count', 0)
+            if events_count > 0:
+                print(f"  • Transform: {statements_count} statement types + {events_count} events")
+            else:
+                print(f"  • Transform: {statements_count} statement types")
             
             # Show detailed load results
             print(f"  • Load Results:")

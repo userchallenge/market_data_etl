@@ -82,6 +82,7 @@ class Instrument(Base):
     financial_ratios = relationship("FinancialRatio", back_populates="instrument")
     portfolio_holdings = relationship("PortfolioHolding", back_populates="instrument")
     transactions = relationship("Transaction", back_populates="instrument")
+    events = relationship("Event", back_populates="instrument")
 
 
 # Backward compatibility alias
@@ -638,5 +639,50 @@ class AlignedDailyData(Base):
         Index('ix_aligned_instrument_date', 'instrument_id', 'date'),
         Index('ix_aligned_calendar', 'trading_calendar'),
         Index('ix_aligned_date_calendar', 'date', 'trading_calendar'),
+        {'sqlite_autoincrement': True}
+    )
+
+
+class Event(Base):
+    """
+    Financial events and calendar data for instruments.
+    
+    Stores upcoming and historical financial events such as earnings releases,
+    dividend payments, stock splits, and other corporate events retrieved
+    from yfinance calendar and earnings data.
+    """
+    __tablename__ = 'events'
+    
+    id = Column(Integer, primary_key=True)
+    instrument_id = Column(Integer, ForeignKey('instruments.id'), nullable=False, index=True)
+    ticker_symbol = Column(String(20), nullable=False, index=True)
+    event_type = Column(String(50), nullable=False, index=True)  # "earnings", "dividend", "ex_dividend", "split"
+    event_date = Column(Date, nullable=False, index=True)
+    event_time = Column(String(50))  # "Before Market Open", "After Market Close", "During Market Hours"
+    description = Column(String(500))
+    
+    # Earnings-specific fields
+    estimated_eps = Column(Float(precision=4))  # Estimated EPS for earnings
+    reported_eps = Column(Float(precision=4))   # Actual reported EPS
+    eps_surprise = Column(Float(precision=4))   # Difference between actual and estimate
+    
+    # Dividend-specific fields
+    dividend_amount = Column(Float(precision=4))  # Dividend amount per share
+    dividend_currency = Column(String(10))        # Currency of dividend
+    
+    # Split-specific fields
+    split_ratio = Column(String(20))  # e.g., "2:1", "3:2"
+    
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    
+    # Relationships
+    instrument = relationship("Instrument", back_populates="events")
+    
+    # Indexes for performance and uniqueness
+    __table_args__ = (
+        Index('ix_event_ticker_date', 'ticker_symbol', 'event_date'),
+        Index('ix_event_type_date', 'event_type', 'event_date'),
+        Index('ix_event_date_type', 'event_date', 'event_type'),
         {'sqlite_autoincrement': True}
     )
