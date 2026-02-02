@@ -6,6 +6,41 @@ This document provides a comprehensive reference for all available CLI commands 
 
 The market-data-etl CLI provides commands for fetching, storing, and managing financial market data from various sources including Yahoo Finance, FRED, Eurostat, ECB, and OECD.
 
+## Quick Command Reference
+
+### Price Data Commands
+- fetch-prices
+- fetch-all
+- fetch-financial-statements
+
+### Portfolio Management Commands
+- load-portfolio
+- fetch-portfolio-prices
+- fetch-portfolio-fundamentals
+- portfolio-info
+- load-transactions
+
+### Economic Data Commands
+- fetch-economic-indicator
+- fetch-all-economic-indicators
+
+### Data Import/Export Commands
+- load-price-csv
+- generate-price-csv-template
+
+### Database Commands
+- db-info
+- clear-database
+- update-instrument-types
+
+### Data Alignment Commands
+- align-data
+- alignment-info
+- alignment-pairs
+- rebuild-aligned-data
+- query-aligned-data
+- aligned-data-info
+
 ## Command Categories
 
 ### 1. Price Data Commands
