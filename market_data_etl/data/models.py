@@ -688,22 +688,22 @@ class Event(Base):
     )
 
 
-class DailyValuationMetrics(Base):
+class MonthlyValuationMetrics(Base):
     """
-    Daily valuation metrics for financial instruments.
+    Monthly valuation metrics for financial instruments.
     
-    Stores daily calculated valuation ratios (P/E, P/S, etc.) based on
-    closing prices and TTM (Trailing Twelve Months) fundamental data.
+    Stores monthly calculated valuation ratios (P/E, P/S, etc.) based on
+    median monthly prices and TTM (Trailing Twelve Months) fundamental data.
     Updated automatically when new price or financial data is loaded.
     """
-    __tablename__ = 'daily_valuation_metrics'
+    __tablename__ = 'monthly_valuation_metrics'
     
     id = Column(Integer, primary_key=True)
     instrument_id = Column(Integer, ForeignKey('instruments.id'), nullable=False)
-    date = Column(Date, nullable=False, index=True)
+    date = Column(Date, nullable=False, index=True)  # Last trading day of the month
     
-    # Price data (denormalized for performance)
-    close_price = Column(Float)
+    # Price data (denormalized for performance) - median of monthly prices
+    median_monthly_price = Column(Float)
     
     # TTM Fundamentals (updated when quarterly/annual data changes)
     ttm_revenue = Column(Float)          # TTM revenue (sum of last 4 quarters or latest annual)
@@ -711,9 +711,9 @@ class DailyValuationMetrics(Base):
     ttm_eps = Column(Float)              # TTM EPS (ttm_net_income / shares_diluted)
     shares_diluted = Column(Float)       # Latest reported diluted shares outstanding
     
-    # Daily Valuation Ratios
-    pe_ratio = Column(Float)             # Price-to-Earnings = close_price / ttm_eps (null if ttm_eps <= 0)
-    ps_ratio = Column(Float)             # Price-to-Sales = (close_price * shares_diluted) / ttm_revenue (null if ttm_revenue <= 0)
+    # Monthly Valuation Ratios
+    pe_ratio = Column(Float)             # Price-to-Earnings = median_monthly_price / ttm_eps (null if ttm_eps <= 0)
+    ps_ratio = Column(Float)             # Price-to-Sales = (median_monthly_price * shares_diluted) / ttm_revenue (null if ttm_revenue <= 0)
     
     # Extensible design - ready for future KPIs
     pb_ratio = Column(Float)             # Future: Price-to-Book ratio
@@ -730,9 +730,9 @@ class DailyValuationMetrics(Base):
     
     # Indexes for efficient querying and uniqueness
     __table_args__ = (
-        Index('ix_daily_val_instrument_date', 'instrument_id', 'date'),
-        Index('ix_daily_val_date', 'date'),
-        Index('ix_daily_val_instrument', 'instrument_id'),
-        UniqueConstraint('instrument_id', 'date', name='uq_daily_val_instrument_date'),
+        Index('ix_monthly_val_instrument_date', 'instrument_id', 'date'),
+        Index('ix_monthly_val_date', 'date'),
+        Index('ix_monthly_val_instrument', 'instrument_id'),
+        UniqueConstraint('instrument_id', 'date', name='uq_monthly_val_instrument_date'),
         {'sqlite_autoincrement': True}
     )

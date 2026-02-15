@@ -65,17 +65,23 @@ class FinancialOverviewGenerator:
             if not price_data.empty:
                 price_overview = self._process_price_data(price_data)
                 price_growth = self._calculate_price_growth_rates(price_data)
-                valuation_ratios = self._calculate_valuation_ratios(financial_data, price_data)
                 
                 # Merge price data
                 price_complete = price_overview.merge(
                     price_growth, on='ticker_symbol', how='left'
                 )
                 
-                # Merge valuation ratios
-                if not valuation_ratios.empty:
+                # Step 4: Get monthly valuation data (PE/PS ratios)
+                monthly_valuation_data = self._query_monthly_valuation_data()
+                if not monthly_valuation_data.empty:
+                    monthly_valuation_overview = self._process_monthly_valuation_data(monthly_valuation_data)
+                    monthly_valuation_growth = self._calculate_monthly_valuation_growth_rates(monthly_valuation_data)
+                    
+                    # Merge monthly valuation data
                     price_complete = price_complete.merge(
-                        valuation_ratios, on='ticker_symbol', how='left', suffixes=('', '_val')
+                        monthly_valuation_overview, on='ticker_symbol', how='left'
+                    ).merge(
+                        monthly_valuation_growth, on='ticker_symbol', how='left'
                     )
                 
                 # Rename fundamental date column for clarity
@@ -444,73 +450,131 @@ class FinancialOverviewGenerator:
         
         return ratios
     
-    def _calculate_valuation_ratios(self, financial_data: pd.DataFrame, price_data: pd.DataFrame) -> pd.DataFrame:
-        """Calculate P/E and P/S ratios for latest period and historical data"""
-        if financial_data.empty or price_data.empty:
-            return pd.DataFrame()
-            
-        ratio_results = []
+    def _query_monthly_valuation_data(self) -> pd.DataFrame:
+        """Query monthly valuation metrics from database"""
+        monthly_valuation_query = """
+        SELECT 
+            i.ticker_symbol,
+            i.instrument_name,
+            mv.date as valuation_date,
+            mv.median_monthly_price,
+            mv.ttm_revenue,
+            mv.ttm_net_income,
+            mv.ttm_eps,
+            mv.shares_diluted,
+            mv.pe_ratio,
+            mv.ps_ratio,
+            strftime('%Y', mv.date) as year,
+            strftime('%m', mv.date) as month
+        FROM instruments i
+        INNER JOIN monthly_valuation_metrics mv ON i.id = mv.instrument_id
+        WHERE mv.pe_ratio IS NOT NULL 
+            AND mv.ps_ratio IS NOT NULL
+        ORDER BY i.ticker_symbol, mv.date DESC
+        """
         
-        for ticker in financial_data['ticker_symbol'].unique():
+        return self._query_to_df(monthly_valuation_query)
+    
+    def _process_monthly_valuation_data(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Process monthly valuation data to get latest and historical values"""
+        if df.empty:
+            return pd.DataFrame()
+        
+        df['valuation_date'] = pd.to_datetime(df['valuation_date'])
+        df['year'] = df['valuation_date'].dt.year
+        current_year = datetime.now().year
+        
+        results = []
+        
+        for ticker in df['ticker_symbol'].unique():
             if pd.isna(ticker):
                 continue
                 
-            ticker_financial = financial_data[financial_data['ticker_symbol'] == ticker].copy()
-            ticker_price = price_data[price_data['ticker_symbol'] == ticker].copy()
+            ticker_data = df[df['ticker_symbol'] == ticker].copy()
+            ticker_data = ticker_data.sort_values('valuation_date', ascending=False)
             
-            if ticker_financial.empty or ticker_price.empty:
-                continue
-                
             ticker_result = {'ticker_symbol': ticker}
             
-            # Process each period's data for valuation ratios
-            for _, fin_row in ticker_financial.iterrows():
-                fin_year = fin_row['year']  # Already a string from the query
-                
-                # Find corresponding price data for this year
-                price_year_data = ticker_price[ticker_price['year'] == fin_year]
-                if price_year_data.empty:
+            # Get latest valuation metrics
+            if not ticker_data.empty:
+                latest_record = ticker_data.iloc[0]
+                ticker_result['latest_valuation_date'] = latest_record['valuation_date'].strftime('%Y-%m-%d')
+                ticker_result['latest_pe_ratio'] = latest_record['pe_ratio']
+                ticker_result['latest_ps_ratio'] = latest_record['ps_ratio']
+            
+            # Get historical annual averages (year-end values or average if multiple per year)
+            years_available = sorted(ticker_data['year'].unique())
+            
+            for year in years_available:
+                if year == current_year:
                     continue
                     
-                # Use year-end price for the financial period
-                year_end_price = price_year_data.iloc[-1]['close_price'] if not price_year_data.empty else None
-                
-                if pd.notna(year_end_price):
-                    period_ratios = self._calculate_period_valuation_ratios(fin_row, year_end_price)
+                year_data = ticker_data[ticker_data['year'] == year]
+                if not year_data.empty:
+                    # Use December data if available, otherwise use latest available for that year
+                    dec_data = year_data[year_data['valuation_date'].dt.month == 12]
+                    if not dec_data.empty:
+                        year_record = dec_data.iloc[0]
+                    else:
+                        year_record = year_data.iloc[-1]  # Latest in year
                     
-                    # Add latest ratios (most recent data)
-                    if ticker_result.get('latest_date') is None or fin_row['period_end_date'] > pd.to_datetime(ticker_result.get('latest_date', '1900-01-01')):
-                        ticker_result['latest_date'] = fin_row['period_end_date']
-                        for ratio_name, ratio_value in period_ratios.items():
-                            ticker_result[f'latest_{ratio_name}'] = ratio_value
-                    
-                    # Add historical ratios by year
-                    current_year = str(datetime.now().year)
-                    
-                    if fin_year != current_year and fin_row['period_type'] == 'annual':
-                        for ratio_name, ratio_value in period_ratios.items():
-                            ticker_result[f'{ratio_name}_{fin_year}'] = ratio_value
+                    ticker_result[f'pe_ratio_{year}'] = year_record['pe_ratio']
+                    ticker_result[f'ps_ratio_{year}'] = year_record['ps_ratio']
             
-            if len(ticker_result) > 1:  # Only add if we have actual ratio data
-                ratio_results.append(ticker_result)
+            results.append(ticker_result)
         
-        return pd.DataFrame(ratio_results)
+        return pd.DataFrame(results)
     
-    def _calculate_period_valuation_ratios(self, fin_row: pd.Series, price: float) -> Dict[str, float]:
-        """Calculate P/E and P/S ratios for a single period"""
-        ratios = {}
+    def _calculate_monthly_valuation_growth_rates(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Calculate median growth rates for monthly PE/PS ratios"""
+        if df.empty:
+            return pd.DataFrame()
         
-        # P/E Ratio = Price / EPS
-        if pd.notna(fin_row['diluted_eps']) and fin_row['diluted_eps'] != 0:
-            ratios['pe_ratio'] = price / fin_row['diluted_eps']
+        growth_results = []
         
-        # P/S Ratio = Market Cap / Revenue = (Price * Shares) / Revenue
-        if (pd.notna(fin_row['total_revenue']) and fin_row['total_revenue'] != 0 
-            and pd.notna(fin_row['weighted_average_shares_diluted'])):
-            market_cap = price * fin_row['weighted_average_shares_diluted']
-            ratios['ps_ratio'] = market_cap / fin_row['total_revenue']
+        for ticker in df['ticker_symbol'].unique():
+            if pd.isna(ticker):
+                continue
+                
+            ticker_data = df[df['ticker_symbol'] == ticker].copy()
+            
+            if len(ticker_data) < 2:
+                continue
+            
+            ticker_data = ticker_data.sort_values('valuation_date')
+            ticker_data['valuation_date'] = pd.to_datetime(ticker_data['valuation_date'])
+            
+            pe_growth = []
+            ps_growth = []
+            
+            for i in range(1, len(ticker_data)):
+                current = ticker_data.iloc[i]
+                previous = ticker_data.iloc[i - 1]
+                
+                # PE ratio growth
+                if (pd.notna(current['pe_ratio']) and pd.notna(previous['pe_ratio']) 
+                    and previous['pe_ratio'] > 0):
+                    growth = (current['pe_ratio'] - previous['pe_ratio']) / previous['pe_ratio']
+                    pe_growth.append(growth)
+                
+                # PS ratio growth
+                if (pd.notna(current['ps_ratio']) and pd.notna(previous['ps_ratio']) 
+                    and previous['ps_ratio'] > 0):
+                    growth = (current['ps_ratio'] - previous['ps_ratio']) / previous['ps_ratio']
+                    ps_growth.append(growth)
+            
+            median_pe_growth = np.median(pe_growth) if pe_growth else np.nan
+            median_ps_growth = np.median(ps_growth) if ps_growth else np.nan
+            
+            growth_results.append({
+                'ticker_symbol': ticker,
+                'median_pe_growth': median_pe_growth,
+                'median_ps_growth': median_ps_growth,
+                'pe_growth_periods': len(pe_growth),
+                'ps_growth_periods': len(ps_growth)
+            })
         
-        return ratios
+        return pd.DataFrame(growth_results)
     
     def _process_price_data(self, df: pd.DataFrame) -> pd.DataFrame:
         """Process price data to get year-end and latest values"""
@@ -632,6 +696,8 @@ class FinancialOverviewGenerator:
         
         financial_growth_cols = ['median_revenue_growth', 'median_ebitda_growth', 'median_fcf_growth']
         price_growth_cols = ['median_price_growth'] if 'median_price_growth' in df.columns else []
+        valuation_growth_cols = ['median_pe_growth', 'median_ps_growth']
+        valuation_growth_cols = [col for col in valuation_growth_cols if col in df.columns]
         
         # Get historical year columns
         all_cols = df.columns.tolist()
@@ -653,7 +719,7 @@ class FinancialOverviewGenerator:
         # Final column order
         final_column_order = (base_cols + latest_fundamental_cols + latest_ttm_cols + 
                              latest_price_cols + latest_ratio_cols + latest_valuation_cols +
-                             financial_growth_cols + price_growth_cols + 
+                             financial_growth_cols + price_growth_cols + valuation_growth_cols + 
                              financial_year_cols + price_year_cols + ratio_year_cols + valuation_year_cols)
         
         # Select only columns that exist and reorder
@@ -669,6 +735,10 @@ class FinancialOverviewGenerator:
             final_df['median_fcf_growth_pct'] = final_df['median_fcf_growth'] * 100
         if 'median_price_growth' in final_df.columns:
             final_df['median_price_growth_pct'] = final_df['median_price_growth'] * 100
+        if 'median_pe_growth' in final_df.columns:
+            final_df['median_pe_growth_pct'] = final_df['median_pe_growth'] * 100
+        if 'median_ps_growth' in final_df.columns:
+            final_df['median_ps_growth_pct'] = final_df['median_ps_growth'] * 100
         
         return final_df
 

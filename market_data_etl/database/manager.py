@@ -12,7 +12,7 @@ Designed for comprehensive financial analysis of global companies.
 
 from typing import Dict, Any, List, Tuple, Optional, Union
 from datetime import date, datetime, timezone
-from sqlalchemy import create_engine, and_, desc
+from sqlalchemy import create_engine, and_, desc, text
 from sqlalchemy.orm import sessionmaker, Session
 import pandas as pd
 
@@ -24,7 +24,7 @@ from ..data.models import (
     Base, Instrument, Price, IncomeStatement, BalanceSheet, CashFlow, FinancialRatio,
     Portfolio, PortfolioHolding, Transaction, InstrumentType, TransactionType,
     EconomicIndicator, EconomicIndicatorData, Threshold, Frequency, ThresholdCategory,
-    AlignedDailyData, Event, DailyValuationMetrics
+    AlignedDailyData, Event, MonthlyValuationMetrics
 )
 
 
@@ -2540,14 +2540,14 @@ class DatabaseManager:
     # Daily Valuation Metrics Methods
     # ============================================================================
 
-    def get_daily_valuation_metrics(
+    def get_monthly_valuation_metrics(
         self,
         ticker: str,
         start_date: Optional[date] = None,
         end_date: Optional[date] = None
     ) -> pd.DataFrame:
         """
-        Get daily valuation metrics for a ticker.
+        Get monthly valuation metrics for a ticker.
         
         Args:
             ticker: Stock ticker symbol
@@ -2561,10 +2561,10 @@ class DatabaseManager:
             ticker = validate_ticker(ticker)
             
             with self.get_session() as session:
-                query = """
+                query = text("""
                 SELECT 
                     dvm.date,
-                    dvm.close_price,
+                    dvm.median_monthly_price,
                     dvm.ttm_revenue,
                     dvm.ttm_net_income,
                     dvm.ttm_eps,
@@ -2572,21 +2572,20 @@ class DatabaseManager:
                     dvm.pe_ratio,
                     dvm.ps_ratio
                 FROM instruments ins
-                JOIN daily_valuation_metrics dvm ON ins.id = dvm.instrument_id
-                WHERE ins.ticker_symbol = ?
-                """
+                JOIN monthly_valuation_metrics dvm ON ins.id = dvm.instrument_id
+                WHERE ins.ticker_symbol = :ticker
+                """ + (
+                    " AND dvm.date >= :start_date" if start_date else ""
+                ) + (
+                    " AND dvm.date <= :end_date" if end_date else ""
+                ) + " ORDER BY dvm.date ASC")
                 
-                params = [ticker]
-                
+                params = {'ticker': ticker}
                 if start_date:
-                    query += " AND dvm.date >= ?"
-                    params.append(start_date)
+                    params['start_date'] = start_date
                 if end_date:
-                    query += " AND dvm.date <= ?"
-                    params.append(end_date)
+                    params['end_date'] = end_date
                     
-                query += " ORDER BY dvm.date ASC"
-                
                 result = session.execute(query, params).fetchall()
                 
                 if not result:
@@ -2594,7 +2593,7 @@ class DatabaseManager:
                 
                 # Convert to DataFrame
                 columns = [
-                    'date', 'close_price', 'ttm_revenue', 'ttm_net_income',
+                    'date', 'median_monthly_price', 'ttm_revenue', 'ttm_net_income',
                     'ttm_eps', 'shares_diluted', 'pe_ratio', 'ps_ratio'
                 ]
                 
@@ -2624,7 +2623,7 @@ class DatabaseManager:
             ticker = validate_ticker(ticker)
             
             with self.get_session() as session:
-                query = """
+                query = text("""
                 SELECT 
                     COUNT(*) as total_records,
                     MIN(dvm.date) as start_date,
@@ -2635,17 +2634,17 @@ class DatabaseManager:
                     AVG(dvm.ps_ratio) as avg_ps_ratio,
                     MIN(dvm.ps_ratio) as min_ps_ratio,
                     MAX(dvm.ps_ratio) as max_ps_ratio,
-                    AVG(dvm.close_price) as avg_price,
-                    MIN(dvm.close_price) as min_price,
-                    MAX(dvm.close_price) as max_price
+                    AVG(dvm.median_monthly_price) as avg_price,
+                    MIN(dvm.median_monthly_price) as min_price,
+                    MAX(dvm.median_monthly_price) as max_price
                 FROM instruments ins
-                JOIN daily_valuation_metrics dvm ON ins.id = dvm.instrument_id
-                WHERE ins.ticker_symbol = ?
+                JOIN monthly_valuation_metrics dvm ON ins.id = dvm.instrument_id
+                WHERE ins.ticker_symbol = :ticker
                     AND dvm.pe_ratio IS NOT NULL
                     AND dvm.ps_ratio IS NOT NULL
-                """
+                """)
                 
-                result = session.execute(query, [ticker]).fetchone()
+                result = session.execute(query, {'ticker': ticker}).fetchone()
                 
                 if not result or result[0] == 0:
                     return {
@@ -2683,14 +2682,14 @@ class DatabaseManager:
             self.logger.error(f"Failed to get valuation metrics summary for {ticker}: {e}")
             raise DatabaseError(f"Failed to get valuation metrics summary for {ticker}: {e}") from e
 
-    def clear_daily_valuation_metrics(
+    def clear_monthly_valuation_metrics(
         self,
         ticker: Optional[str] = None,
         start_date: Optional[date] = None,
         end_date: Optional[date] = None
     ) -> int:
         """
-        Clear daily valuation metrics from database.
+        Clear monthly valuation metrics from database.
         
         Args:
             ticker: Optional ticker to filter by
@@ -2702,7 +2701,7 @@ class DatabaseManager:
         """
         try:
             with self.get_session() as session:
-                query = session.query(DailyValuationMetrics)
+                query = session.query(MonthlyValuationMetrics)
                 
                 if ticker:
                     ticker = validate_ticker(ticker)
@@ -2711,19 +2710,19 @@ class DatabaseManager:
                     ).first()
                     if not instrument:
                         raise DatabaseError(f"Instrument not found for ticker {ticker}")
-                    query = query.filter(DailyValuationMetrics.instrument_id == instrument.id)
+                    query = query.filter(MonthlyValuationMetrics.instrument_id == instrument.id)
                 
                 if start_date:
-                    query = query.filter(DailyValuationMetrics.date >= start_date)
+                    query = query.filter(MonthlyValuationMetrics.date >= start_date)
                 if end_date:
-                    query = query.filter(DailyValuationMetrics.date <= end_date)
+                    query = query.filter(MonthlyValuationMetrics.date <= end_date)
                 
                 deleted_count = query.delete(synchronize_session=False)
                 session.commit()
                 
-                self.logger.info(f"Cleared {deleted_count} daily valuation metric records")
+                self.logger.info(f"Cleared {deleted_count} monthly valuation metric records")
                 return deleted_count
                 
         except Exception as e:
-            self.logger.error(f"Failed to clear daily valuation metrics: {e}")
-            raise DatabaseError(f"Failed to clear daily valuation metrics: {e}") from e
+            self.logger.error(f"Failed to clear monthly valuation metrics: {e}")
+            raise DatabaseError(f"Failed to clear monthly valuation metrics: {e}") from e

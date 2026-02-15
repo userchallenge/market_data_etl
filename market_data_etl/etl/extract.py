@@ -383,12 +383,12 @@ class EconomicDataExtractor:
             raise e
 
 
-class DailyValuationExtractor:
+class MonthlyValuationExtractor:
     """
-    Pure extractor for daily valuation metrics data.
+    Pure extractor for monthly valuation metrics data.
     
     Responsibility: EXTRACT ONLY
-    - Extract price data and TTM timeline data needed for daily valuation calculations
+    - Extract price data and TTM timeline data needed for monthly valuation calculations
     - Handle retry logic and errors
     - Return raw data as-is (no transformation)
     """
@@ -400,14 +400,14 @@ class DailyValuationExtractor:
         self.db_manager = DatabaseManager()
         self.logger = get_logger(__name__)
     
-    def extract_daily_valuation_data(
+    def extract_monthly_valuation_data(
         self, 
         ticker: str,
         start_date: date,
         end_date: Optional[date] = None
     ) -> Dict[str, Any]:
         """
-        Extract all data needed for daily valuation calculations.
+        Extract all data needed for monthly valuation calculations.
         
         Args:
             ticker: Stock ticker symbol
@@ -415,13 +415,13 @@ class DailyValuationExtractor:
             end_date: End date for valuation calculation (defaults to today)
             
         Returns:
-            Dictionary with raw data needed for daily valuations:
+            Dictionary with raw data needed for monthly valuations:
             {
                 'ticker': str,
                 'start_date': date,
                 'end_date': date,
                 'extraction_timestamp': str,
-                'price_data': List[Dict],  # Daily price data
+                'monthly_price_data': List[Dict],  # Monthly aggregated price data
                 'ttm_timeline': List[Dict],  # TTM metrics timeline
                 'instrument_info': Dict  # Basic instrument information
             }
@@ -433,12 +433,12 @@ class DailyValuationExtractor:
             end_date = date.today()
         
         self.logger.info(
-            f"Extracting daily valuation data for {ticker} from {start_date} to {end_date}"
+            f"Extracting monthly valuation data for {ticker} from {start_date} to {end_date}"
         )
         
         try:
-            # Extract price data for the date range
-            price_data = self._extract_price_data(ticker, start_date, end_date)
+            # Extract monthly aggregated price data for the date range
+            monthly_price_data = self._extract_monthly_price_data(ticker, start_date, end_date)
             
             # Extract TTM timeline (all available TTM calculations)
             ttm_timeline = self._extract_ttm_timeline(ticker)
@@ -451,33 +451,42 @@ class DailyValuationExtractor:
                 'start_date': start_date,
                 'end_date': end_date,
                 'extraction_timestamp': datetime.now(timezone.utc).isoformat(),
-                'price_data': price_data,
+                'monthly_price_data': monthly_price_data,
                 'ttm_timeline': ttm_timeline,
                 'instrument_info': instrument_info
             }
             
             self.logger.info(
-                f"Successfully extracted valuation data for {ticker}: "
-                f"{len(price_data)} price records, {len(ttm_timeline)} TTM periods"
+                f"Successfully extracted monthly valuation data for {ticker}: "
+                f"{len(monthly_price_data)} monthly price records, {len(ttm_timeline)} TTM periods"
             )
             
             return extraction_result
             
         except Exception as e:
             self.logger.error(f"Failed to extract daily valuation data for {ticker}: {e}")
-            raise YahooFinanceError(f"Daily valuation data extraction failed for {ticker}: {e}")
+            raise YahooFinanceError(f"Monthly valuation data extraction failed for {ticker}: {e}")
     
-    def _extract_price_data(self, ticker: str, start_date: date, end_date: date) -> List[Dict[str, Any]]:
-        """Extract daily price data from database."""
+    def _extract_monthly_price_data(self, ticker: str, start_date: date, end_date: date) -> List[Dict[str, Any]]:
+        """Extract monthly aggregated price data from database."""
         with self.db_manager.get_session() as session:
+            # First get the raw monthly data, then calculate median in Python
             query = text("""
-            SELECT p.date, p.close
+            SELECT 
+                strftime('%Y-%m', p.date) as month,
+                MAX(p.date) as last_trading_day,
+                COUNT(p.close) as trading_days,
+                MIN(p.close) as min_price,
+                MAX(p.close) as max_price,
+                AVG(p.close) as avg_price,
+                GROUP_CONCAT(p.close) as all_prices
             FROM instruments ins
             JOIN prices p ON ins.id = p.instrument_id
             WHERE ins.ticker_symbol = :ticker
                 AND p.date >= :start_date
                 AND p.date <= :end_date
-            ORDER BY p.date ASC
+            GROUP BY strftime('%Y-%m', p.date)
+            ORDER BY month ASC
             """)
             
             result = session.execute(query, {
@@ -486,13 +495,32 @@ class DailyValuationExtractor:
                 'end_date': end_date
             }).fetchall()
             
-            return [
-                {
-                    'date': row[0],
-                    'close_price': row[1]
-                }
-                for row in result
-            ]
+            monthly_data = []
+            for row in result:
+                # Calculate median from the comma-separated price values
+                prices_str = row[6]  # all_prices field
+                if prices_str:
+                    prices = [float(p) for p in prices_str.split(',')]
+                    prices.sort()
+                    n = len(prices)
+                    if n % 2 == 0:
+                        median_price = (prices[n//2 - 1] + prices[n//2]) / 2
+                    else:
+                        median_price = prices[n//2]
+                else:
+                    median_price = None
+                
+                monthly_data.append({
+                    'month': row[0],
+                    'last_trading_day': row[1], 
+                    'trading_days': row[2],
+                    'median_price': median_price,
+                    'min_price': row[3],
+                    'max_price': row[4],
+                    'avg_price': row[5]
+                })
+            
+            return monthly_data
     
     def _extract_ttm_timeline(self, ticker: str) -> List[Dict[str, Any]]:
         """Extract TTM metrics timeline using TTMCalculator."""

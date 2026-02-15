@@ -1308,13 +1308,13 @@ class EconomicDataTransformer:
             raise ValueError(f"Indicator '{indicator_name}' not found in configuration")
 
 
-class DailyValuationTransformer:
+class MonthlyValuationTransformer:
     """
-    Pure transformer for daily valuation metrics data.
+    Pure transformer for monthly valuation metrics data.
     
     Responsibility: TRANSFORM ONLY
-    - Transform extracted price and TTM data into daily valuation metrics
-    - Calculate P/E and P/S ratios for each trading day
+    - Transform extracted price and TTM data into monthly valuation metrics
+    - Calculate P/E and P/S ratios for each month using median prices
     - Handle edge cases (null values for invalid ratios)
     - Clean and validate data
     - NO extraction or loading logic
@@ -1323,47 +1323,47 @@ class DailyValuationTransformer:
     def __init__(self):
         self.logger = get_logger(__name__)
     
-    def transform_daily_valuation_data(self, raw_data: Dict[str, Any]) -> Dict[str, Any]:
+    def transform_monthly_valuation_data(self, raw_data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Transform raw daily valuation data into standardized daily metrics.
+        Transform raw monthly valuation data into standardized monthly metrics.
         
         Args:
-            raw_data: Raw data from DailyValuationExtractor containing:
-                - price_data: List of daily price records
+            raw_data: Raw data from MonthlyValuationExtractor containing:
+                - monthly_price_data: List of monthly price records with median prices
                 - ttm_timeline: List of TTM metric changes
                 - instrument_info: Basic instrument information
                 
         Returns:
-            Dictionary with transformed daily valuation metrics:
+            Dictionary with transformed monthly valuation metrics:
             {
                 'ticker': str,
                 'instrument_id': int,
                 'start_date': date,
                 'end_date': date,
                 'transformation_timestamp': str,
-                'daily_metrics': List[Dict]  # Daily valuation records
+                'monthly_metrics': List[Dict]  # Monthly valuation records
             }
         """
         ticker = raw_data.get('ticker')
-        self.logger.info(f"Transforming daily valuation data for {ticker}")
+        self.logger.info(f"Transforming monthly valuation data for {ticker}")
         
         try:
             # Extract components
-            price_data = raw_data.get('price_data', [])
+            monthly_price_data = raw_data.get('monthly_price_data', [])
             ttm_timeline = raw_data.get('ttm_timeline', [])
             instrument_info = raw_data.get('instrument_info', {})
             
-            if not price_data:
-                self.logger.warning(f"No price data available for {ticker}")
+            if not monthly_price_data:
+                self.logger.warning(f"No monthly price data available for {ticker}")
                 return self._empty_result(raw_data)
             
             if not ttm_timeline:
                 self.logger.warning(f"No TTM data available for {ticker}")
                 return self._empty_result(raw_data)
             
-            # Build daily metrics by joining price data with TTM data
-            daily_metrics = self._build_daily_metrics(
-                ticker, price_data, ttm_timeline, instrument_info.get('instrument_id')
+            # Build monthly metrics by joining price data with TTM data
+            monthly_metrics = self._build_monthly_metrics(
+                ticker, monthly_price_data, ttm_timeline, instrument_info.get('instrument_id')
             )
             
             transformed_data = {
@@ -1372,36 +1372,36 @@ class DailyValuationTransformer:
                 'start_date': raw_data.get('start_date'),
                 'end_date': raw_data.get('end_date'),
                 'transformation_timestamp': datetime.now(timezone.utc).isoformat(),
-                'daily_metrics': daily_metrics
+                'monthly_metrics': monthly_metrics
             }
             
             self.logger.info(
-                f"Transformed daily valuation data for {ticker}: "
-                f"{len(daily_metrics)} daily records"
+                f"Transformed monthly valuation data for {ticker}: "
+                f"{len(monthly_metrics)} monthly records"
             )
             
             return transformed_data
             
         except Exception as e:
-            self.logger.error(f"Failed to transform daily valuation data for {ticker}: {e}")
+            self.logger.error(f"Failed to transform monthly valuation data for {ticker}: {e}")
             raise e
     
-    def _build_daily_metrics(
+    def _build_monthly_metrics(
         self,
         ticker: str,
-        price_data: List[Dict[str, Any]],
+        monthly_price_data: List[Dict[str, Any]],
         ttm_timeline: List[Dict[str, Any]],
         instrument_id: Optional[int]
     ) -> List[Dict[str, Any]]:
         """
-        Build daily valuation metrics by joining price and TTM data.
+        Build monthly valuation metrics by joining price and TTM data.
         
-        For each trading day, find the most recent TTM metrics and calculate ratios.
+        For each month, find the most recent TTM metrics and calculate ratios using median prices.
         """
-        daily_metrics = []
+        monthly_metrics = []
         
         if not ttm_timeline:
-            return daily_metrics
+            return monthly_metrics
         
         # Sort TTM timeline by date (ensure chronological order)
         sorted_ttm = sorted(
@@ -1409,13 +1409,13 @@ class DailyValuationTransformer:
             key=lambda x: self._parse_date_string(x.get('ttm_as_of_date'))
         )
         
-        # Process each price record
-        for price_record in price_data:
+        # Process each monthly price record
+        for price_record in monthly_price_data:
             try:
-                price_date = self._parse_date_string(price_record.get('date'))
-                close_price = price_record.get('close_price')
+                price_date = self._parse_date_string(price_record.get('last_trading_day'))
+                median_price = price_record.get('median_price')
                 
-                if not price_date or close_price is None:
+                if not price_date or median_price is None:
                     continue
                 
                 # Find the most recent TTM data for this price date
@@ -1423,10 +1423,10 @@ class DailyValuationTransformer:
                 
                 if not applicable_ttm:
                     # No TTM data available for this date - create record with nulls
-                    daily_metrics.append({
+                    monthly_metrics.append({
                         'instrument_id': instrument_id,
                         'date': price_date,
-                        'close_price': close_price,
+                        'median_monthly_price': median_price,
                         'ttm_revenue': None,
                         'ttm_net_income': None,
                         'ttm_eps': None,
@@ -1437,18 +1437,18 @@ class DailyValuationTransformer:
                     continue
                 
                 # Calculate valuation ratios
-                pe_ratio = self._calculate_pe_ratio(close_price, applicable_ttm.get('ttm_eps'))
+                pe_ratio = self._calculate_pe_ratio(median_price, applicable_ttm.get('ttm_eps'))
                 ps_ratio = self._calculate_ps_ratio(
-                    close_price, 
+                    median_price, 
                     applicable_ttm.get('shares_diluted'),
                     applicable_ttm.get('ttm_revenue')
                 )
                 
-                # Create daily metrics record
-                daily_metrics.append({
+                # Create monthly metrics record
+                monthly_metrics.append({
                     'instrument_id': instrument_id,
                     'date': price_date,
-                    'close_price': close_price,
+                    'median_monthly_price': median_price,
                     'ttm_revenue': applicable_ttm.get('ttm_revenue'),
                     'ttm_net_income': applicable_ttm.get('ttm_net_income'),
                     'ttm_eps': applicable_ttm.get('ttm_eps'),
@@ -1458,12 +1458,12 @@ class DailyValuationTransformer:
                 })
                 
             except Exception as e:
-                self.logger.debug(f"Error processing daily metric for {ticker} on {price_record.get('date')}: {e}")
+                self.logger.debug(f"Error processing monthly metric for {ticker} on {price_record.get('last_trading_day')}: {e}")
                 continue
         
         # Sort by date for consistency
-        daily_metrics.sort(key=lambda x: x['date'])
-        return daily_metrics
+        monthly_metrics.sort(key=lambda x: x['date'])
+        return monthly_metrics
     
     def _find_applicable_ttm(
         self, 
@@ -1561,5 +1561,5 @@ class DailyValuationTransformer:
             'start_date': raw_data.get('start_date'),
             'end_date': raw_data.get('end_date'),
             'transformation_timestamp': datetime.now(timezone.utc).isoformat(),
-            'daily_metrics': []
+            'monthly_metrics': []
         }

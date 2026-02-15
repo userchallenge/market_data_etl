@@ -33,8 +33,8 @@ from .commands import (
     rebuild_aligned_data_command,
     query_aligned_data_command,
     aligned_data_info_command,
-    calculate_daily_valuations_command,
-    populate_daily_valuations_command,
+    calculate_monthly_valuations_command,
+    populate_monthly_valuations_command,
     valuation_info_command
 )
 
@@ -71,8 +71,8 @@ Examples:
   %(prog)s rebuild-aligned-data --from 2024-01-01 --to 2024-12-31
   %(prog)s query-aligned-data --ticker AAPL --from 2024-01-01 --output detailed
   %(prog)s query-aligned-data --ticker ESSITY-B.ST --indicators inflation_ea
-  %(prog)s populate-daily-valuations --ticker AAPL
-  %(prog)s calculate-daily-valuations --ticker AAPL --from 2024-01-01 --to 2024-12-31
+  %(prog)s populate-monthly-valuations --ticker AAPL
+  %(prog)s calculate-monthly-valuations --ticker AAPL --from 2024-01-01 --to 2024-12-31
   %(prog)s valuation-info --ticker AAPL
   %(prog)s aligned-data-info
   
@@ -487,10 +487,10 @@ Environment Variables:
         help='Show aligned data system information and coverage statistics'
     )
     
-    # calculate-daily-valuations command
+    # calculate-monthly-valuations command
     calculate_valuations_parser = subparsers.add_parser(
-        'calculate-daily-valuations',
-        help='Calculate daily valuation metrics (P/E, P/S ratios) for a date range'
+        'calculate-monthly-valuations',
+        help='Calculate monthly valuation metrics (P/E, P/S ratios) using median monthly prices for a date range'
     )
     calculate_valuations_parser.add_argument(
         '--ticker', 
@@ -509,10 +509,10 @@ Environment Variables:
         help='End date (YYYY-MM-DD format, defaults to today)'
     )
     
-    # populate-daily-valuations command
+    # populate-monthly-valuations command
     populate_valuations_parser = subparsers.add_parser(
-        'populate-daily-valuations',
-        help='Populate all historical daily valuation metrics for a ticker'
+        'populate-monthly-valuations',
+        help='Populate all historical monthly valuation metrics for a ticker'
     )
     populate_valuations_parser.add_argument(
         '--ticker',
@@ -653,14 +653,14 @@ def main() -> NoReturn:
             )
         elif args.command == 'aligned-data-info':
             exit_code = aligned_data_info_command()
-        elif args.command == 'calculate-daily-valuations':
-            exit_code = calculate_daily_valuations_command(
+        elif args.command == 'calculate-monthly-valuations':
+            exit_code = calculate_monthly_valuations_command(
                 ticker=args.ticker,
                 from_date=args.from_date,
                 to_date=args.to_date
             )
-        elif args.command == 'populate-daily-valuations':
-            exit_code = populate_daily_valuations_command(
+        elif args.command == 'populate-monthly-valuations':
+            exit_code = populate_monthly_valuations_command(
                 ticker=args.ticker
             )
         elif args.command == 'valuation-info':

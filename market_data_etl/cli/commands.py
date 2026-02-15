@@ -2454,12 +2454,12 @@ def fetch_all_command(
 
 
 # =============================================================================
-# DAILY VALUATION COMMANDS
+# MONTHLY VALUATION COMMANDS
 # =============================================================================
 
-def calculate_daily_valuations_command(ticker: str, from_date: str, to_date: str = None) -> int:
+def calculate_monthly_valuations_command(ticker: str, from_date: str, to_date: str = None) -> int:
     """
-    Calculate daily valuation metrics (P/E, P/S ratios) for a ticker.
+    Calculate monthly valuation metrics (P/E, P/S ratios) for a ticker using median monthly prices.
     
     Args:
         ticker: Stock ticker symbol
@@ -2470,7 +2470,7 @@ def calculate_daily_valuations_command(ticker: str, from_date: str, to_date: str
         Exit code (0 for success, 1 for error)
     """
     try:
-        print(f"🔢 Calculating daily valuations for {ticker.upper()}")
+        print(f"🔢 Calculating monthly valuations for {ticker.upper()}")
         
         # Validate inputs
         ticker = validate_ticker(ticker)
@@ -2481,39 +2481,39 @@ def calculate_daily_valuations_command(ticker: str, from_date: str, to_date: str
             raise ValidationError("Start date must be before end date")
         
         # Import here to avoid circular imports
-        from ..etl.load import DailyValuationETLOrchestrator
+        from ..etl.load import MonthlyValuationETLOrchestrator
         
-        # Run daily valuation ETL
-        orchestrator = DailyValuationETLOrchestrator()
-        results = orchestrator.run_daily_valuation_etl(ticker, start_date, end_date)
+        # Run monthly valuation ETL
+        orchestrator = MonthlyValuationETLOrchestrator()
+        results = orchestrator.run_monthly_valuation_etl(ticker, start_date, end_date)
         
         if results['status'] == 'completed':
             loading_results = results.get('loading_results', {})
-            print(f"✅ Daily valuations calculated successfully for {ticker.upper()}")
+            print(f"✅ Monthly valuations calculated successfully for {ticker.upper()}")
             print(f"📊 Processed: {loading_results.get('records_processed', 0)} records")
             print(f"➕ Inserted: {loading_results.get('records_inserted', 0)} new records")
             print(f"🔄 Updated: {loading_results.get('records_updated', 0)} existing records")
             return SUCCESS_EXIT_CODE
             
         elif results['status'] == 'failed':
-            print(f"❌ Daily valuation calculation failed for {ticker.upper()}: {results.get('error', 'unknown error')}")
+            print(f"❌ Monthly valuation calculation failed for {ticker.upper()}: {results.get('error', 'unknown error')}")
             return ERROR_EXIT_CODE
             
         else:
-            print(f"⚠️ Daily valuation calculation completed with issues for {ticker.upper()}")
+            print(f"⚠️ Monthly valuation calculation completed with issues for {ticker.upper()}")
             return ERROR_EXIT_CODE
             
     except ValidationError as e:
         print(f"ERROR: {e}")
         return ERROR_EXIT_CODE
     except Exception as e:
-        print(f"ERROR: Failed to calculate daily valuations for {ticker}: {e}")
+        print(f"ERROR: Failed to calculate monthly valuations for {ticker}: {e}")
         return ERROR_EXIT_CODE
 
 
-def populate_daily_valuations_command(ticker: str) -> int:
+def populate_monthly_valuations_command(ticker: str) -> int:
     """
-    Populate all historical daily valuation metrics for a ticker.
+    Populate all historical monthly valuation metrics for a ticker.
     
     Args:
         ticker: Stock ticker symbol
@@ -2522,7 +2522,7 @@ def populate_daily_valuations_command(ticker: str) -> int:
         Exit code (0 for success, 1 for error)
     """
     try:
-        print(f"🏗️ Populating historical daily valuations for {ticker.upper()}")
+        print(f"🏗️ Populating historical monthly valuations for {ticker.upper()}")
         
         # Validate ticker
         ticker = validate_ticker(ticker)
@@ -2578,7 +2578,7 @@ def valuation_info_command(ticker: str) -> int:
     try:
         ticker = validate_ticker(ticker)
         
-        print(f"📊 Daily Valuation Metrics for {ticker.upper()}")
+        print(f"📊 Monthly Valuation Metrics for {ticker.upper()}")
         print("=" * 50)
         
         # Get valuation summary from database
@@ -2623,7 +2623,7 @@ def valuation_info_command(ticker: str) -> int:
             print("   No price data available")
         
         print(f"\n💡 View detailed data using:")
-        print(f"   db_manager.get_daily_valuation_metrics('{ticker.upper()}')")
+        print(f"   db_manager.get_monthly_valuation_metrics('{ticker.upper()}')")
         
         return SUCCESS_EXIT_CODE
         

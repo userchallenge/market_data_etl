@@ -83,11 +83,11 @@ class FinancialDataLoader:
                 # For financial data, we need to check if new fundamental data was loaded
                 # that might affect TTM calculations across a broader date range
                 fundamental_data_range = self._extract_fundamental_data_range(transformed_data)
-                self._auto_calculate_daily_valuations(ticker, fundamental_data_range)
-                loading_results['daily_valuations_updated'] = True
+                self._auto_calculate_monthly_valuations(ticker, fundamental_data_range)
+                loading_results['monthly_valuations_updated'] = True
             except Exception as e:
-                self.logger.warning(f"Daily valuation auto-calculation failed for {ticker}: {e}")
-                loading_results['daily_valuations_updated'] = False
+                self.logger.warning(f"Monthly valuation auto-calculation failed for {ticker}: {e}")
+                loading_results['monthly_valuations_updated'] = False
             
         except Exception as e:
             error_msg = f"Failed to load financial data for {ticker}: {str(e)}"
@@ -138,11 +138,11 @@ class FinancialDataLoader:
             try:
                 # Extract date range from price data for incremental calculation
                 price_data_range = self._extract_price_data_range(transformed_df)
-                self._auto_calculate_daily_valuations(ticker, price_data_range)
-                loading_results['daily_valuations_updated'] = True
+                self._auto_calculate_monthly_valuations(ticker, price_data_range)
+                loading_results['monthly_valuations_updated'] = True
             except Exception as e:
-                self.logger.warning(f"Daily valuation auto-calculation failed for {ticker}: {e}")
-                loading_results['daily_valuations_updated'] = False
+                self.logger.warning(f"Monthly valuation auto-calculation failed for {ticker}: {e}")
+                loading_results['monthly_valuations_updated'] = False
             
         except Exception as e:
             error_msg = f"Failed to load price data for {ticker}: {str(e)}"
@@ -312,9 +312,9 @@ class FinancialDataLoader:
             self.logger.debug(f"Could not extract fundamental data range: {e}")
             return None
     
-    def _auto_calculate_daily_valuations(self, ticker: str, data_range: Optional[Dict[str, date]] = None) -> None:
+    def _auto_calculate_monthly_valuations(self, ticker: str, data_range: Optional[Dict[str, date]] = None) -> None:
         """
-        Auto-calculate daily valuations for a ticker when new data is loaded.
+        Auto-calculate monthly valuations for a ticker when new data is loaded.
         
         This method intelligently determines whether to do incremental updates or
         full historical population based on the data range provided.
@@ -323,11 +323,11 @@ class FinancialDataLoader:
             ticker: Stock ticker symbol
             data_range: Optional dict with 'start_date' and 'end_date' of newly loaded data
         """
-        self.logger.info(f"Auto-calculating daily valuations for {ticker}")
+        self.logger.info(f"Auto-calculating monthly valuations for {ticker}")
         
         try:
             # Create orchestrator
-            valuation_etl = DailyValuationETLOrchestrator(self.db_manager)
+            valuation_etl = MonthlyValuationETLOrchestrator(self.db_manager)
             
             # Determine calculation strategy
             if data_range and data_range.get('start_date') and data_range.get('end_date'):
@@ -353,20 +353,20 @@ class FinancialDataLoader:
                 mode = "incrementally" if results.get('incremental_mode') else "historically"
                 
                 self.logger.info(
-                    f"Daily valuations auto-calculated {mode} for {ticker}: "
+                    f"Monthly valuations auto-calculated {mode} for {ticker}: "
                     f"{records_processed} records processed"
                 )
             elif results['status'] == 'no_data':
-                self.logger.debug(f"No data available for daily valuation calculation: {ticker}")
+                self.logger.debug(f"No data available for monthly valuation calculation: {ticker}")
             else:
                 self.logger.warning(
-                    f"Daily valuation auto-calculation completed with issues for {ticker}: "
+                    f"Monthly valuation auto-calculation completed with issues for {ticker}: "
                     f"{results.get('error', 'unknown error')}"
                 )
                 
         except Exception as e:
             # Don't fail the main load operation if valuation calculation fails
-            self.logger.warning(f"Failed to auto-calculate daily valuations for {ticker}: {e}")
+            self.logger.warning(f"Failed to auto-calculate monthly valuations for {ticker}: {e}")
 
 
 class ETLOrchestrator:
@@ -1186,12 +1186,12 @@ class AlignedDataETLOrchestrator:
             return {}
 
 
-class DailyValuationLoader:
+class MonthlyValuationLoader:
     """
-    Pure loader for daily valuation metrics to database.
+    Pure loader for monthly valuation metrics to database.
     
     Responsibility: LOAD ONLY
-    - Persist transformed daily valuation data to database
+    - Persist transformed monthly valuation data to database
     - Handle database operations and transactions
     - NO extraction or transformation logic
     """
@@ -1200,18 +1200,18 @@ class DailyValuationLoader:
         self.logger = get_logger(__name__)
         self.db_manager = db_manager or DatabaseManager()
     
-    def load_daily_valuation_data(self, transformed_data: Dict[str, Any]) -> Dict[str, Any]:
+    def load_monthly_valuation_data(self, transformed_data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Load transformed daily valuation metrics into database.
+        Load transformed monthly valuation metrics into database.
         
         Args:
-            transformed_data: Transformed data from DailyValuationTransformer
+            transformed_data: Transformed data from MonthlyValuationTransformer
             
         Returns:
             Dictionary with loading results and statistics
         """
         ticker = transformed_data.get('ticker')
-        self.logger.info(f"Loading daily valuation data for {ticker}")
+        self.logger.info(f"Loading monthly valuation data for {ticker}")
         
         loading_results = {
             'ticker': ticker,
@@ -1223,52 +1223,52 @@ class DailyValuationLoader:
         }
         
         try:
-            daily_metrics = transformed_data.get('daily_metrics', [])
+            monthly_metrics = transformed_data.get('monthly_metrics', [])
             
-            if not daily_metrics:
-                self.logger.info(f"No daily valuation metrics to load for {ticker}")
+            if not monthly_metrics:
+                self.logger.info(f"No monthly valuation metrics to load for {ticker}")
                 return loading_results
             
             # Load in batch for efficiency
-            results = self._batch_load_daily_metrics(daily_metrics)
+            results = self._batch_load_monthly_metrics(monthly_metrics)
             
             loading_results.update({
-                'records_processed': len(daily_metrics),
+                'records_processed': len(monthly_metrics),
                 'records_inserted': results['inserted'],
                 'records_updated': results['updated']
             })
             
             self.logger.info(
-                f"Successfully loaded daily valuation data for {ticker}: "
+                f"Successfully loaded monthly valuation data for {ticker}: "
                 f"{results['inserted']} inserted, {results['updated']} updated"
             )
             
         except Exception as e:
-            error_msg = f"Failed to load daily valuation data for {ticker}: {e}"
+            error_msg = f"Failed to load monthly valuation data for {ticker}: {e}"
             self.logger.error(error_msg)
             loading_results['errors'].append(error_msg)
         
         return loading_results
     
-    def _batch_load_daily_metrics(self, daily_metrics: List[Dict[str, Any]]) -> Dict[str, int]:
+    def _batch_load_monthly_metrics(self, monthly_metrics: List[Dict[str, Any]]) -> Dict[str, int]:
         """
-        Load daily metrics in batch using database manager.
+        Load monthly metrics in batch using database manager.
         
         Returns:
             Dictionary with insert/update counts
         """
-        from ..data.models import DailyValuationMetrics
+        from ..data.models import MonthlyValuationMetrics
         
         inserted_count = 0
         updated_count = 0
         
         with self.db_manager.get_session() as session:
-            for metric_data in daily_metrics:
+            for metric_data in monthly_metrics:
                 try:
                     # Check if record already exists
-                    existing = session.query(DailyValuationMetrics).filter(
-                        DailyValuationMetrics.instrument_id == metric_data['instrument_id'],
-                        DailyValuationMetrics.date == metric_data['date']
+                    existing = session.query(MonthlyValuationMetrics).filter(
+                        MonthlyValuationMetrics.instrument_id == metric_data['instrument_id'],
+                        MonthlyValuationMetrics.date == metric_data['date']
                     ).first()
                     
                     if existing:
@@ -1280,7 +1280,7 @@ class DailyValuationLoader:
                         updated_count += 1
                     else:
                         # Create new record
-                        new_metric = DailyValuationMetrics(**metric_data)
+                        new_metric = MonthlyValuationMetrics(**metric_data)
                         session.add(new_metric)
                         inserted_count += 1
                     
@@ -1289,7 +1289,7 @@ class DailyValuationLoader:
                         session.commit()
                         
                 except Exception as e:
-                    self.logger.debug(f"Error loading daily metric: {e}")
+                    self.logger.debug(f"Error loading monthly metric: {e}")
                     session.rollback()
                     continue
             
@@ -1299,11 +1299,11 @@ class DailyValuationLoader:
         return {'inserted': inserted_count, 'updated': updated_count}
 
 
-class DailyValuationETLOrchestrator:
+class MonthlyValuationETLOrchestrator:
     """
-    Orchestrator for daily valuation metrics ETL process.
+    Orchestrator for monthly valuation metrics ETL process.
     
-    Coordinates extract → transform → load pipeline for daily valuations.
+    Coordinates extract → transform → load pipeline for monthly valuations.
     """
     
     def __init__(self, db_manager: Optional[DatabaseManager] = None):
@@ -1311,21 +1311,21 @@ class DailyValuationETLOrchestrator:
         self.db_manager = db_manager or DatabaseManager()
         
         # Initialize ETL components
-        from .extract import DailyValuationExtractor
-        from .transform import DailyValuationTransformer
+        from .extract import MonthlyValuationExtractor
+        from .transform import MonthlyValuationTransformer
         
-        self.extractor = DailyValuationExtractor()
-        self.transformer = DailyValuationTransformer()
-        self.loader = DailyValuationLoader(db_manager)
+        self.extractor = MonthlyValuationExtractor()
+        self.transformer = MonthlyValuationTransformer()
+        self.loader = MonthlyValuationLoader(db_manager)
     
-    def run_daily_valuation_etl(
+    def run_monthly_valuation_etl(
         self,
         ticker: str,
         start_date: date,
         end_date: Optional[date] = None
     ) -> Dict[str, Any]:
         """
-        Run complete daily valuation ETL pipeline for a ticker.
+        Run complete monthly valuation ETL pipeline for a ticker.
         
         Args:
             ticker: Stock ticker symbol
@@ -1335,7 +1335,7 @@ class DailyValuationETLOrchestrator:
         Returns:
             Dictionary with ETL results
         """
-        self.logger.info(f"Starting daily valuation ETL for {ticker} from {start_date}")
+        self.logger.info(f"Starting monthly valuation ETL for {ticker} from {start_date}")
         
         etl_results = {
             'ticker': ticker,
@@ -1350,20 +1350,20 @@ class DailyValuationETLOrchestrator:
         
         try:
             # Extract
-            raw_data = self.extractor.extract_daily_valuation_data(ticker, start_date, end_date)
+            raw_data = self.extractor.extract_monthly_valuation_data(ticker, start_date, end_date)
             etl_results['extraction_results'] = {
-                'price_records': len(raw_data.get('price_data', [])),
+                'monthly_price_records': len(raw_data.get('monthly_price_data', [])),
                 'ttm_periods': len(raw_data.get('ttm_timeline', []))
             }
             
             # Transform
-            transformed_data = self.transformer.transform_daily_valuation_data(raw_data)
+            transformed_data = self.transformer.transform_monthly_valuation_data(raw_data)
             etl_results['transformation_results'] = {
-                'daily_metrics_count': len(transformed_data.get('daily_metrics', []))
+                'monthly_metrics_count': len(transformed_data.get('monthly_metrics', []))
             }
             
             # Load
-            loading_results = self.loader.load_daily_valuation_data(transformed_data)
+            loading_results = self.loader.load_monthly_valuation_data(transformed_data)
             etl_results['loading_results'] = loading_results
             
             # Determine overall status
@@ -1372,10 +1372,10 @@ class DailyValuationETLOrchestrator:
             else:
                 etl_results['status'] = 'completed'
             
-            self.logger.info(f"Daily valuation ETL completed for {ticker}")
+            self.logger.info(f"Monthly valuation ETL completed for {ticker}")
             
         except Exception as e:
-            error_msg = f"Daily valuation ETL failed for {ticker}: {e}"
+            error_msg = f"Monthly valuation ETL failed for {ticker}: {e}"
             self.logger.error(error_msg)
             etl_results['status'] = 'failed'
             etl_results['error'] = error_msg
@@ -1390,16 +1390,16 @@ class DailyValuationETLOrchestrator:
         recalculate_affected: bool = True
     ) -> Dict[str, Any]:
         """
-        Run incremental daily valuation ETL for specific date ranges.
+        Run incremental monthly valuation ETL for specific date ranges.
         
         This is more efficient than historical population as it only calculates
-        valuations for the specified date range instead of all historical data.
+        monthly valuations for the specified date range instead of all historical data.
         
         Args:
             ticker: Stock ticker symbol
             start_date: Start date for incremental calculation
             end_date: End date for incremental calculation (defaults to today)
-            recalculate_affected: If True, also recalculate dates where TTM may have changed
+            recalculate_affected: If True, also recalculate months where TTM may have changed
             
         Returns:
             Dictionary with ETL results
@@ -1407,7 +1407,7 @@ class DailyValuationETLOrchestrator:
         if end_date is None:
             end_date = date.today()
             
-        self.logger.info(f"Starting incremental valuation ETL for {ticker} from {start_date} to {end_date}")
+        self.logger.info(f"Starting incremental monthly valuation ETL for {ticker} from {start_date} to {end_date}")
         
         etl_results = {
             'ticker': ticker,
@@ -1423,7 +1423,7 @@ class DailyValuationETLOrchestrator:
         
         try:
             # For incremental updates, we might need to extend the date range
-            # if new fundamental data affects historical TTM calculations
+            # if new fundamental data affects historical monthly TTM calculations
             calculation_start_date = start_date
             calculation_end_date = end_date
             
@@ -1444,7 +1444,7 @@ class DailyValuationETLOrchestrator:
                     )
             
             # Run ETL for the determined date range
-            return self.run_daily_valuation_etl(ticker, calculation_start_date, calculation_end_date)
+            return self.run_monthly_valuation_etl(ticker, calculation_start_date, calculation_end_date)
             
         except Exception as e:
             error_msg = f"Incremental valuation ETL failed for {ticker}: {e}"
@@ -1481,7 +1481,7 @@ class DailyValuationETLOrchestrator:
             )
             
             # Run ETL for full historical range
-            return self.run_daily_valuation_etl(ticker, start_date, end_date)
+            return self.run_monthly_valuation_etl(ticker, start_date, end_date)
             
         except Exception as e:
             error_msg = f"Historical population failed for {ticker}: {e}"
