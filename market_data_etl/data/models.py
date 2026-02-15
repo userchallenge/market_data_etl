@@ -10,7 +10,7 @@ This module defines the database schema for storing:
 Designed for comprehensive financial analysis of global companies.
 """
 
-from sqlalchemy import Column, Integer, String, Float, Date, DateTime, ForeignKey, Index, Text, Enum
+from sqlalchemy import Column, Integer, String, Float, Date, DateTime, ForeignKey, Index, Text, Enum, UniqueConstraint
 from sqlalchemy.orm import declarative_base
 from sqlalchemy.orm import relationship
 from datetime import datetime, timezone
@@ -684,5 +684,55 @@ class Event(Base):
         Index('ix_event_ticker_date', 'ticker_symbol', 'event_date'),
         Index('ix_event_type_date', 'event_type', 'event_date'),
         Index('ix_event_date_type', 'event_date', 'event_type'),
+        {'sqlite_autoincrement': True}
+    )
+
+
+class DailyValuationMetrics(Base):
+    """
+    Daily valuation metrics for financial instruments.
+    
+    Stores daily calculated valuation ratios (P/E, P/S, etc.) based on
+    closing prices and TTM (Trailing Twelve Months) fundamental data.
+    Updated automatically when new price or financial data is loaded.
+    """
+    __tablename__ = 'daily_valuation_metrics'
+    
+    id = Column(Integer, primary_key=True)
+    instrument_id = Column(Integer, ForeignKey('instruments.id'), nullable=False)
+    date = Column(Date, nullable=False, index=True)
+    
+    # Price data (denormalized for performance)
+    close_price = Column(Float)
+    
+    # TTM Fundamentals (updated when quarterly/annual data changes)
+    ttm_revenue = Column(Float)          # TTM revenue (sum of last 4 quarters or latest annual)
+    ttm_net_income = Column(Float)       # TTM net income (sum of last 4 quarters or latest annual) 
+    ttm_eps = Column(Float)              # TTM EPS (ttm_net_income / shares_diluted)
+    shares_diluted = Column(Float)       # Latest reported diluted shares outstanding
+    
+    # Daily Valuation Ratios
+    pe_ratio = Column(Float)             # Price-to-Earnings = close_price / ttm_eps (null if ttm_eps <= 0)
+    ps_ratio = Column(Float)             # Price-to-Sales = (close_price * shares_diluted) / ttm_revenue (null if ttm_revenue <= 0)
+    
+    # Extensible design - ready for future KPIs
+    pb_ratio = Column(Float)             # Future: Price-to-Book ratio
+    pcf_ratio = Column(Float)            # Future: Price-to-Cash-Flow ratio
+    ev_ebitda = Column(Float)            # Future: Enterprise Value / EBITDA
+    
+    # Metadata
+    ttm_as_of_date = Column(Date)        # Date when TTM metrics were calculated from
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    
+    # Relationships
+    instrument = relationship("Instrument")
+    
+    # Indexes for efficient querying and uniqueness
+    __table_args__ = (
+        Index('ix_daily_val_instrument_date', 'instrument_id', 'date'),
+        Index('ix_daily_val_date', 'date'),
+        Index('ix_daily_val_instrument', 'instrument_id'),
+        UniqueConstraint('instrument_id', 'date', name='uq_daily_val_instrument_date'),
         {'sqlite_autoincrement': True}
     )

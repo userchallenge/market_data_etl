@@ -24,7 +24,7 @@ from ..data.models import (
     Base, Instrument, Price, IncomeStatement, BalanceSheet, CashFlow, FinancialRatio,
     Portfolio, PortfolioHolding, Transaction, InstrumentType, TransactionType,
     EconomicIndicator, EconomicIndicatorData, Threshold, Frequency, ThresholdCategory,
-    AlignedDailyData, Event
+    AlignedDailyData, Event, DailyValuationMetrics
 )
 
 
@@ -2535,3 +2535,195 @@ class DatabaseManager:
         except Exception as e:
             self.logger.error(f"Failed to clear aligned daily data: {e}")
             raise DatabaseError(f"Failed to clear aligned daily data: {e}") from e
+
+    # ============================================================================
+    # Daily Valuation Metrics Methods
+    # ============================================================================
+
+    def get_daily_valuation_metrics(
+        self,
+        ticker: str,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None
+    ) -> pd.DataFrame:
+        """
+        Get daily valuation metrics for a ticker.
+        
+        Args:
+            ticker: Stock ticker symbol
+            start_date: Optional start date filter
+            end_date: Optional end date filter
+            
+        Returns:
+            DataFrame with daily valuation metrics
+        """
+        try:
+            ticker = validate_ticker(ticker)
+            
+            with self.get_session() as session:
+                query = """
+                SELECT 
+                    dvm.date,
+                    dvm.close_price,
+                    dvm.ttm_revenue,
+                    dvm.ttm_net_income,
+                    dvm.ttm_eps,
+                    dvm.shares_diluted,
+                    dvm.pe_ratio,
+                    dvm.ps_ratio
+                FROM instruments ins
+                JOIN daily_valuation_metrics dvm ON ins.id = dvm.instrument_id
+                WHERE ins.ticker_symbol = ?
+                """
+                
+                params = [ticker]
+                
+                if start_date:
+                    query += " AND dvm.date >= ?"
+                    params.append(start_date)
+                if end_date:
+                    query += " AND dvm.date <= ?"
+                    params.append(end_date)
+                    
+                query += " ORDER BY dvm.date ASC"
+                
+                result = session.execute(query, params).fetchall()
+                
+                if not result:
+                    return pd.DataFrame()
+                
+                # Convert to DataFrame
+                columns = [
+                    'date', 'close_price', 'ttm_revenue', 'ttm_net_income',
+                    'ttm_eps', 'shares_diluted', 'pe_ratio', 'ps_ratio'
+                ]
+                
+                df = pd.DataFrame(result, columns=columns)
+                
+                # Ensure date column is date type
+                df['date'] = pd.to_datetime(df['date']).dt.date
+                
+                self.logger.debug(f"Retrieved {len(df)} daily valuation metrics for {ticker}")
+                return df
+                
+        except Exception as e:
+            self.logger.error(f"Failed to get daily valuation metrics for {ticker}: {e}")
+            raise DatabaseError(f"Failed to get daily valuation metrics for {ticker}: {e}") from e
+
+    def get_valuation_metrics_summary(self, ticker: str) -> Dict[str, Any]:
+        """
+        Get summary statistics for valuation metrics of a ticker.
+        
+        Args:
+            ticker: Stock ticker symbol
+            
+        Returns:
+            Dictionary with valuation metrics summary
+        """
+        try:
+            ticker = validate_ticker(ticker)
+            
+            with self.get_session() as session:
+                query = """
+                SELECT 
+                    COUNT(*) as total_records,
+                    MIN(dvm.date) as start_date,
+                    MAX(dvm.date) as end_date,
+                    AVG(dvm.pe_ratio) as avg_pe_ratio,
+                    MIN(dvm.pe_ratio) as min_pe_ratio,
+                    MAX(dvm.pe_ratio) as max_pe_ratio,
+                    AVG(dvm.ps_ratio) as avg_ps_ratio,
+                    MIN(dvm.ps_ratio) as min_ps_ratio,
+                    MAX(dvm.ps_ratio) as max_ps_ratio,
+                    AVG(dvm.close_price) as avg_price,
+                    MIN(dvm.close_price) as min_price,
+                    MAX(dvm.close_price) as max_price
+                FROM instruments ins
+                JOIN daily_valuation_metrics dvm ON ins.id = dvm.instrument_id
+                WHERE ins.ticker_symbol = ?
+                    AND dvm.pe_ratio IS NOT NULL
+                    AND dvm.ps_ratio IS NOT NULL
+                """
+                
+                result = session.execute(query, [ticker]).fetchone()
+                
+                if not result or result[0] == 0:
+                    return {
+                        'ticker': ticker,
+                        'total_records': 0,
+                        'data_available': False
+                    }
+                
+                return {
+                    'ticker': ticker,
+                    'total_records': result[0],
+                    'data_available': True,
+                    'date_range': {
+                        'start_date': result[1],
+                        'end_date': result[2]
+                    },
+                    'pe_ratio_stats': {
+                        'avg': round(result[3], 4) if result[3] else None,
+                        'min': round(result[4], 4) if result[4] else None,
+                        'max': round(result[5], 4) if result[5] else None
+                    },
+                    'ps_ratio_stats': {
+                        'avg': round(result[6], 4) if result[6] else None,
+                        'min': round(result[7], 4) if result[7] else None,
+                        'max': round(result[8], 4) if result[8] else None
+                    },
+                    'price_stats': {
+                        'avg': round(result[9], 2) if result[9] else None,
+                        'min': round(result[10], 2) if result[10] else None,
+                        'max': round(result[11], 2) if result[11] else None
+                    }
+                }
+                
+        except Exception as e:
+            self.logger.error(f"Failed to get valuation metrics summary for {ticker}: {e}")
+            raise DatabaseError(f"Failed to get valuation metrics summary for {ticker}: {e}") from e
+
+    def clear_daily_valuation_metrics(
+        self,
+        ticker: Optional[str] = None,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None
+    ) -> int:
+        """
+        Clear daily valuation metrics from database.
+        
+        Args:
+            ticker: Optional ticker to filter by
+            start_date: Optional start date filter  
+            end_date: Optional end date filter
+            
+        Returns:
+            Number of records deleted
+        """
+        try:
+            with self.get_session() as session:
+                query = session.query(DailyValuationMetrics)
+                
+                if ticker:
+                    ticker = validate_ticker(ticker)
+                    instrument = session.query(Instrument).filter(
+                        Instrument.ticker_symbol == ticker
+                    ).first()
+                    if not instrument:
+                        raise DatabaseError(f"Instrument not found for ticker {ticker}")
+                    query = query.filter(DailyValuationMetrics.instrument_id == instrument.id)
+                
+                if start_date:
+                    query = query.filter(DailyValuationMetrics.date >= start_date)
+                if end_date:
+                    query = query.filter(DailyValuationMetrics.date <= end_date)
+                
+                deleted_count = query.delete(synchronize_session=False)
+                session.commit()
+                
+                self.logger.info(f"Cleared {deleted_count} daily valuation metric records")
+                return deleted_count
+                
+        except Exception as e:
+            self.logger.error(f"Failed to clear daily valuation metrics: {e}")
+            raise DatabaseError(f"Failed to clear daily valuation metrics: {e}") from e

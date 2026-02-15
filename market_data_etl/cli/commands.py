@@ -2451,3 +2451,188 @@ def fetch_all_command(
     except Exception as e:
         print(f"ERROR: Fetch-all command failed: {e}")
         return ERROR_EXIT_CODE
+
+
+# =============================================================================
+# DAILY VALUATION COMMANDS
+# =============================================================================
+
+def calculate_daily_valuations_command(ticker: str, from_date: str, to_date: str = None) -> int:
+    """
+    Calculate daily valuation metrics (P/E, P/S ratios) for a ticker.
+    
+    Args:
+        ticker: Stock ticker symbol
+        from_date: Start date in YYYY-MM-DD format
+        to_date: End date in YYYY-MM-DD format (optional, defaults to today)
+        
+    Returns:
+        Exit code (0 for success, 1 for error)
+    """
+    try:
+        print(f"🔢 Calculating daily valuations for {ticker.upper()}")
+        
+        # Validate inputs
+        ticker = validate_ticker(ticker)
+        start_date = validate_date_string(from_date, "from_date")
+        end_date = validate_date_string(to_date, "to_date") if to_date else None
+        
+        if end_date and start_date > end_date:
+            raise ValidationError("Start date must be before end date")
+        
+        # Import here to avoid circular imports
+        from ..etl.load import DailyValuationETLOrchestrator
+        
+        # Run daily valuation ETL
+        orchestrator = DailyValuationETLOrchestrator()
+        results = orchestrator.run_daily_valuation_etl(ticker, start_date, end_date)
+        
+        if results['status'] == 'completed':
+            loading_results = results.get('loading_results', {})
+            print(f"✅ Daily valuations calculated successfully for {ticker.upper()}")
+            print(f"📊 Processed: {loading_results.get('records_processed', 0)} records")
+            print(f"➕ Inserted: {loading_results.get('records_inserted', 0)} new records")
+            print(f"🔄 Updated: {loading_results.get('records_updated', 0)} existing records")
+            return SUCCESS_EXIT_CODE
+            
+        elif results['status'] == 'failed':
+            print(f"❌ Daily valuation calculation failed for {ticker.upper()}: {results.get('error', 'unknown error')}")
+            return ERROR_EXIT_CODE
+            
+        else:
+            print(f"⚠️ Daily valuation calculation completed with issues for {ticker.upper()}")
+            return ERROR_EXIT_CODE
+            
+    except ValidationError as e:
+        print(f"ERROR: {e}")
+        return ERROR_EXIT_CODE
+    except Exception as e:
+        print(f"ERROR: Failed to calculate daily valuations for {ticker}: {e}")
+        return ERROR_EXIT_CODE
+
+
+def populate_daily_valuations_command(ticker: str) -> int:
+    """
+    Populate all historical daily valuation metrics for a ticker.
+    
+    Args:
+        ticker: Stock ticker symbol
+        
+    Returns:
+        Exit code (0 for success, 1 for error)
+    """
+    try:
+        print(f"🏗️ Populating historical daily valuations for {ticker.upper()}")
+        
+        # Validate ticker
+        ticker = validate_ticker(ticker)
+        
+        # Import here to avoid circular imports
+        from ..etl.load import DailyValuationETLOrchestrator
+        
+        # Run historical population
+        orchestrator = DailyValuationETLOrchestrator()
+        results = orchestrator.run_historical_population(ticker)
+        
+        if results['status'] == 'completed':
+            loading_results = results.get('loading_results', {})
+            print(f"✅ Historical daily valuations populated for {ticker.upper()}")
+            print(f"📊 Total records: {loading_results.get('records_processed', 0)}")
+            print(f"➕ New records: {loading_results.get('records_inserted', 0)}")
+            print(f"🔄 Updated records: {loading_results.get('records_updated', 0)}")
+            return SUCCESS_EXIT_CODE
+            
+        elif results['status'] == 'no_data':
+            print(f"⚠️ No price or fundamental data available for {ticker.upper()}")
+            print("💡 Fetch price and fundamental data first using:")
+            print(f"   market-data-etl fetch-prices --ticker {ticker.upper()} --from 2020-01-01")
+            print(f"   market-data-etl fetch-fundamentals --ticker {ticker.upper()}")
+            return ERROR_EXIT_CODE
+            
+        elif results['status'] == 'failed':
+            print(f"❌ Historical population failed for {ticker.upper()}: {results.get('error', 'unknown error')}")
+            return ERROR_EXIT_CODE
+            
+        else:
+            print(f"⚠️ Historical population completed with issues for {ticker.upper()}")
+            return ERROR_EXIT_CODE
+            
+    except ValidationError as e:
+        print(f"ERROR: {e}")
+        return ERROR_EXIT_CODE
+    except Exception as e:
+        print(f"ERROR: Failed to populate daily valuations for {ticker}: {e}")
+        return ERROR_EXIT_CODE
+
+
+def valuation_info_command(ticker: str) -> int:
+    """
+    Show daily valuation metrics information for a ticker.
+    
+    Args:
+        ticker: Stock ticker symbol
+        
+    Returns:
+        Exit code (0 for success, 1 for error)
+    """
+    try:
+        ticker = validate_ticker(ticker)
+        
+        print(f"📊 Daily Valuation Metrics for {ticker.upper()}")
+        print("=" * 50)
+        
+        # Get valuation summary from database
+        db_manager = DatabaseManager()
+        summary = db_manager.get_valuation_metrics_summary(ticker)
+        
+        if not summary['data_available']:
+            print("❌ No daily valuation data available")
+            print(f"💡 Populate valuations using:")
+            print(f"   market-data-etl populate-daily-valuations --ticker {ticker.upper()}")
+            return ERROR_EXIT_CODE
+        
+        # Display summary information
+        print(f"📈 Total Records: {summary['total_records']:,}")
+        print(f"📅 Date Range: {summary['date_range']['start_date']} to {summary['date_range']['end_date']}")
+        
+        # P/E Ratio Statistics
+        print("\n📊 P/E Ratio Statistics:")
+        pe_stats = summary['pe_ratio_stats']
+        if pe_stats['avg']:
+            print(f"   Average: {pe_stats['avg']}")
+            print(f"   Range: {pe_stats['min']} - {pe_stats['max']}")
+        else:
+            print("   No P/E data available")
+        
+        # P/S Ratio Statistics
+        print("\n📊 P/S Ratio Statistics:")
+        ps_stats = summary['ps_ratio_stats']
+        if ps_stats['avg']:
+            print(f"   Average: {ps_stats['avg']}")
+            print(f"   Range: {ps_stats['min']} - {ps_stats['max']}")
+        else:
+            print("   No P/S data available")
+        
+        # Price Statistics
+        print("\n💰 Price Statistics:")
+        price_stats = summary['price_stats']
+        if price_stats['avg']:
+            print(f"   Average: ${price_stats['avg']}")
+            print(f"   Range: ${price_stats['min']} - ${price_stats['max']}")
+        else:
+            print("   No price data available")
+        
+        print(f"\n💡 View detailed data using:")
+        print(f"   db_manager.get_daily_valuation_metrics('{ticker.upper()}')")
+        
+        return SUCCESS_EXIT_CODE
+        
+    except ValidationError as e:
+        print(f"ERROR: {e}")
+        return ERROR_EXIT_CODE
+    except DatabaseError as e:
+        print(f"ERROR: Database error: {e}")
+        return ERROR_EXIT_CODE
+    except Exception as e:
+        print(f"ERROR: Failed to get valuation info for {ticker}: {e}")
+        return ERROR_EXIT_CODE

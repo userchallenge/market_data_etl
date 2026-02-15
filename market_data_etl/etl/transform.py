@@ -1306,3 +1306,260 @@ class EconomicDataTransformer:
             return mapping
         else:
             raise ValueError(f"Indicator '{indicator_name}' not found in configuration")
+
+
+class DailyValuationTransformer:
+    """
+    Pure transformer for daily valuation metrics data.
+    
+    Responsibility: TRANSFORM ONLY
+    - Transform extracted price and TTM data into daily valuation metrics
+    - Calculate P/E and P/S ratios for each trading day
+    - Handle edge cases (null values for invalid ratios)
+    - Clean and validate data
+    - NO extraction or loading logic
+    """
+    
+    def __init__(self):
+        self.logger = get_logger(__name__)
+    
+    def transform_daily_valuation_data(self, raw_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Transform raw daily valuation data into standardized daily metrics.
+        
+        Args:
+            raw_data: Raw data from DailyValuationExtractor containing:
+                - price_data: List of daily price records
+                - ttm_timeline: List of TTM metric changes
+                - instrument_info: Basic instrument information
+                
+        Returns:
+            Dictionary with transformed daily valuation metrics:
+            {
+                'ticker': str,
+                'instrument_id': int,
+                'start_date': date,
+                'end_date': date,
+                'transformation_timestamp': str,
+                'daily_metrics': List[Dict]  # Daily valuation records
+            }
+        """
+        ticker = raw_data.get('ticker')
+        self.logger.info(f"Transforming daily valuation data for {ticker}")
+        
+        try:
+            # Extract components
+            price_data = raw_data.get('price_data', [])
+            ttm_timeline = raw_data.get('ttm_timeline', [])
+            instrument_info = raw_data.get('instrument_info', {})
+            
+            if not price_data:
+                self.logger.warning(f"No price data available for {ticker}")
+                return self._empty_result(raw_data)
+            
+            if not ttm_timeline:
+                self.logger.warning(f"No TTM data available for {ticker}")
+                return self._empty_result(raw_data)
+            
+            # Build daily metrics by joining price data with TTM data
+            daily_metrics = self._build_daily_metrics(
+                ticker, price_data, ttm_timeline, instrument_info.get('instrument_id')
+            )
+            
+            transformed_data = {
+                'ticker': ticker,
+                'instrument_id': instrument_info.get('instrument_id'),
+                'start_date': raw_data.get('start_date'),
+                'end_date': raw_data.get('end_date'),
+                'transformation_timestamp': datetime.now(timezone.utc).isoformat(),
+                'daily_metrics': daily_metrics
+            }
+            
+            self.logger.info(
+                f"Transformed daily valuation data for {ticker}: "
+                f"{len(daily_metrics)} daily records"
+            )
+            
+            return transformed_data
+            
+        except Exception as e:
+            self.logger.error(f"Failed to transform daily valuation data for {ticker}: {e}")
+            raise e
+    
+    def _build_daily_metrics(
+        self,
+        ticker: str,
+        price_data: List[Dict[str, Any]],
+        ttm_timeline: List[Dict[str, Any]],
+        instrument_id: Optional[int]
+    ) -> List[Dict[str, Any]]:
+        """
+        Build daily valuation metrics by joining price and TTM data.
+        
+        For each trading day, find the most recent TTM metrics and calculate ratios.
+        """
+        daily_metrics = []
+        
+        if not ttm_timeline:
+            return daily_metrics
+        
+        # Sort TTM timeline by date (ensure chronological order)
+        sorted_ttm = sorted(
+            ttm_timeline, 
+            key=lambda x: self._parse_date_string(x.get('ttm_as_of_date'))
+        )
+        
+        # Process each price record
+        for price_record in price_data:
+            try:
+                price_date = self._parse_date_string(price_record.get('date'))
+                close_price = price_record.get('close_price')
+                
+                if not price_date or close_price is None:
+                    continue
+                
+                # Find the most recent TTM data for this price date
+                applicable_ttm = self._find_applicable_ttm(price_date, sorted_ttm)
+                
+                if not applicable_ttm:
+                    # No TTM data available for this date - create record with nulls
+                    daily_metrics.append({
+                        'instrument_id': instrument_id,
+                        'date': price_date,
+                        'close_price': close_price,
+                        'ttm_revenue': None,
+                        'ttm_net_income': None,
+                        'ttm_eps': None,
+                        'shares_diluted': None,
+                        'pe_ratio': None,
+                        'ps_ratio': None
+                    })
+                    continue
+                
+                # Calculate valuation ratios
+                pe_ratio = self._calculate_pe_ratio(close_price, applicable_ttm.get('ttm_eps'))
+                ps_ratio = self._calculate_ps_ratio(
+                    close_price, 
+                    applicable_ttm.get('shares_diluted'),
+                    applicable_ttm.get('ttm_revenue')
+                )
+                
+                # Create daily metrics record
+                daily_metrics.append({
+                    'instrument_id': instrument_id,
+                    'date': price_date,
+                    'close_price': close_price,
+                    'ttm_revenue': applicable_ttm.get('ttm_revenue'),
+                    'ttm_net_income': applicable_ttm.get('ttm_net_income'),
+                    'ttm_eps': applicable_ttm.get('ttm_eps'),
+                    'shares_diluted': applicable_ttm.get('shares_diluted'),
+                    'pe_ratio': pe_ratio,
+                    'ps_ratio': ps_ratio
+                })
+                
+            except Exception as e:
+                self.logger.debug(f"Error processing daily metric for {ticker} on {price_record.get('date')}: {e}")
+                continue
+        
+        # Sort by date for consistency
+        daily_metrics.sort(key=lambda x: x['date'])
+        return daily_metrics
+    
+    def _find_applicable_ttm(
+        self, 
+        price_date: date, 
+        sorted_ttm_timeline: List[Dict[str, Any]]
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Find the most recent TTM data that applies to the given price date.
+        
+        TTM data is valid from its as_of_date onwards until the next TTM period.
+        """
+        applicable_ttm = None
+        
+        for ttm_record in sorted_ttm_timeline:
+            ttm_as_of_date = self._parse_date_string(ttm_record.get('ttm_as_of_date'))
+            
+            if ttm_as_of_date and ttm_as_of_date <= price_date:
+                # This TTM period applies to our price date
+                applicable_ttm = ttm_record
+            else:
+                # We've reached TTM data that's newer than our price date
+                break
+        
+        return applicable_ttm
+    
+    def _calculate_pe_ratio(self, close_price: float, ttm_eps: Optional[float]) -> Optional[float]:
+        """
+        Calculate P/E ratio (Price per share / Earnings per share).
+        
+        Returns None if TTM EPS is None, zero, or negative (can't have meaningful P/E).
+        """
+        if ttm_eps is None or ttm_eps <= 0:
+            return None
+        
+        if close_price is None or close_price <= 0:
+            return None
+        
+        pe_ratio = close_price / ttm_eps
+        return round(pe_ratio, 4)
+    
+    def _calculate_ps_ratio(
+        self, 
+        close_price: float, 
+        shares_diluted: Optional[float], 
+        ttm_revenue: Optional[float]
+    ) -> Optional[float]:
+        """
+        Calculate P/S ratio (Market Cap / TTM Revenue).
+        
+        Market Cap = close_price * shares_diluted
+        Returns None if revenue is None, zero, or negative.
+        """
+        if ttm_revenue is None or ttm_revenue <= 0:
+            return None
+        
+        if close_price is None or close_price <= 0:
+            return None
+        
+        if shares_diluted is None or shares_diluted <= 0:
+            return None
+        
+        market_cap = close_price * shares_diluted
+        ps_ratio = market_cap / ttm_revenue
+        return round(ps_ratio, 4)
+    
+    def _parse_date_string(self, date_str: Any) -> Optional[date]:
+        """Parse date string into date object."""
+        if not date_str:
+            return None
+        
+        # If already a date object
+        if isinstance(date_str, date):
+            return date_str
+        
+        # If it's a string, parse it
+        if isinstance(date_str, str):
+            try:
+                # Try ISO format first
+                return datetime.fromisoformat(date_str.replace('Z', '+00:00')).date()
+            except ValueError:
+                try:
+                    # Try standard date format
+                    return datetime.strptime(date_str, '%Y-%m-%d').date()
+                except ValueError:
+                    self.logger.debug(f"Could not parse date string: {date_str}")
+                    return None
+        
+        return None
+    
+    def _empty_result(self, raw_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Return empty result structure when no data can be transformed."""
+        return {
+            'ticker': raw_data.get('ticker'),
+            'instrument_id': raw_data.get('instrument_info', {}).get('instrument_id'),
+            'start_date': raw_data.get('start_date'),
+            'end_date': raw_data.get('end_date'),
+            'transformation_timestamp': datetime.now(timezone.utc).isoformat(),
+            'daily_metrics': []
+        }

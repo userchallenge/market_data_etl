@@ -5,9 +5,10 @@ This module is responsible ONLY for loading transformed data into the database.
 No extraction or transformation logic should be here.
 """
 
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Union
 from datetime import datetime, date, timezone
 import pandas as pd
+from sqlalchemy import text
 
 from ..utils.logging import get_logger
 from ..database.manager import DatabaseManager
@@ -77,6 +78,17 @@ class FinancialDataLoader:
             total_loaded = sum(storage_counts.values())
             self.logger.info(f"Successfully loaded {total_loaded} records for {ticker}")
             
+            # Auto-calculate daily valuations (synchronous) with smart detection
+            try:
+                # For financial data, we need to check if new fundamental data was loaded
+                # that might affect TTM calculations across a broader date range
+                fundamental_data_range = self._extract_fundamental_data_range(transformed_data)
+                self._auto_calculate_daily_valuations(ticker, fundamental_data_range)
+                loading_results['daily_valuations_updated'] = True
+            except Exception as e:
+                self.logger.warning(f"Daily valuation auto-calculation failed for {ticker}: {e}")
+                loading_results['daily_valuations_updated'] = False
+            
         except Exception as e:
             error_msg = f"Failed to load financial data for {ticker}: {str(e)}"
             self.logger.error(error_msg)
@@ -121,6 +133,16 @@ class FinancialDataLoader:
             loading_results['loaded_records'] = loaded_count
             
             self.logger.info(f"Successfully loaded {loaded_count} price records for {ticker}")
+            
+            # Auto-calculate daily valuations (synchronous) with date range optimization
+            try:
+                # Extract date range from price data for incremental calculation
+                price_data_range = self._extract_price_data_range(transformed_df)
+                self._auto_calculate_daily_valuations(ticker, price_data_range)
+                loading_results['daily_valuations_updated'] = True
+            except Exception as e:
+                self.logger.warning(f"Daily valuation auto-calculation failed for {ticker}: {e}")
+                loading_results['daily_valuations_updated'] = False
             
         except Exception as e:
             error_msg = f"Failed to load price data for {ticker}: {str(e)}"
@@ -213,6 +235,138 @@ class FinancialDataLoader:
         except Exception as e:
             self.logger.error(f"Failed to load events data for {ticker}: {e}")
             return 0
+    
+    def _extract_price_data_range(self, price_df: pd.DataFrame) -> Optional[Dict[str, date]]:
+        """
+        Extract date range from price DataFrame for incremental calculation.
+        
+        Args:
+            price_df: DataFrame with price data containing 'date' column
+            
+        Returns:
+            Dictionary with start_date and end_date or None if no dates found
+        """
+        try:
+            if price_df.empty or 'date' not in price_df.columns:
+                return None
+            
+            # Get min and max dates from the DataFrame
+            dates = price_df['date']
+            min_date = dates.min()
+            max_date = dates.max()
+            
+            # Convert to date objects if they're not already
+            if hasattr(min_date, 'date'):
+                min_date = min_date.date()
+            if hasattr(max_date, 'date'):
+                max_date = max_date.date()
+            
+            return {
+                'start_date': min_date,
+                'end_date': max_date
+            }
+            
+        except Exception as e:
+            self.logger.debug(f"Could not extract price data range: {e}")
+            return None
+    
+    def _extract_fundamental_data_range(self, transformed_data: Dict[str, Any]) -> Optional[Dict[str, date]]:
+        """
+        Extract date range from financial data that might affect TTM calculations.
+        
+        Args:
+            transformed_data: Transformed financial data containing statements
+            
+        Returns:
+            Dictionary with start_date and end_date or None if no relevant data found
+        """
+        try:
+            statements = transformed_data.get('statements', {})
+            income_stmt = statements.get('income_stmt', {})
+            quarterly_data = income_stmt.get('quarterly', {})
+            
+            if not quarterly_data:
+                # No quarterly data means likely no TTM impact
+                return None
+            
+            # Find date range of quarterly income statements
+            quarter_dates = []
+            for date_str, period_data in quarterly_data.items():
+                try:
+                    # Convert date string to date object
+                    if isinstance(date_str, str):
+                        quarter_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+                        quarter_dates.append(quarter_date)
+                except (ValueError, TypeError):
+                    continue
+            
+            if not quarter_dates:
+                return None
+            
+            return {
+                'start_date': min(quarter_dates),
+                'end_date': max(quarter_dates)
+            }
+            
+        except Exception as e:
+            self.logger.debug(f"Could not extract fundamental data range: {e}")
+            return None
+    
+    def _auto_calculate_daily_valuations(self, ticker: str, data_range: Optional[Dict[str, date]] = None) -> None:
+        """
+        Auto-calculate daily valuations for a ticker when new data is loaded.
+        
+        This method intelligently determines whether to do incremental updates or
+        full historical population based on the data range provided.
+        
+        Args:
+            ticker: Stock ticker symbol
+            data_range: Optional dict with 'start_date' and 'end_date' of newly loaded data
+        """
+        self.logger.info(f"Auto-calculating daily valuations for {ticker}")
+        
+        try:
+            # Create orchestrator
+            valuation_etl = DailyValuationETLOrchestrator(self.db_manager)
+            
+            # Determine calculation strategy
+            if data_range and data_range.get('start_date') and data_range.get('end_date'):
+                # We have specific date range - use incremental calculation
+                self.logger.info(
+                    f"Using incremental calculation for {ticker}: "
+                    f"{data_range['start_date']} to {data_range['end_date']}"
+                )
+                results = valuation_etl.run_incremental_valuation_etl(
+                    ticker, 
+                    data_range['start_date'], 
+                    data_range['end_date']
+                )
+            else:
+                # No date range info - fall back to full historical population
+                self.logger.info(f"Using full historical population for {ticker}")
+                results = valuation_etl.run_historical_population(ticker)
+            
+            # Log results
+            if results['status'] == 'completed':
+                loading_results = results.get('loading_results', {})
+                records_processed = loading_results.get('records_processed', 0)
+                mode = "incrementally" if results.get('incremental_mode') else "historically"
+                
+                self.logger.info(
+                    f"Daily valuations auto-calculated {mode} for {ticker}: "
+                    f"{records_processed} records processed"
+                )
+            elif results['status'] == 'no_data':
+                self.logger.debug(f"No data available for daily valuation calculation: {ticker}")
+            else:
+                self.logger.warning(
+                    f"Daily valuation auto-calculation completed with issues for {ticker}: "
+                    f"{results.get('error', 'unknown error')}"
+                )
+                
+        except Exception as e:
+            # Don't fail the main load operation if valuation calculation fails
+            self.logger.warning(f"Failed to auto-calculate daily valuations for {ticker}: {e}")
 
 
 class ETLOrchestrator:
@@ -372,8 +526,7 @@ class ETLOrchestrator:
             raise e
         
         return etl_results
-
-
+    
 class EconomicDataLoader:
     """
     Pure loader for economic data to database.
@@ -1031,3 +1184,457 @@ class AlignedDataETLOrchestrator:
         except Exception as e:
             self.logger.error(f"Failed to get economic data: {e}")
             return {}
+
+
+class DailyValuationLoader:
+    """
+    Pure loader for daily valuation metrics to database.
+    
+    Responsibility: LOAD ONLY
+    - Persist transformed daily valuation data to database
+    - Handle database operations and transactions
+    - NO extraction or transformation logic
+    """
+    
+    def __init__(self, db_manager: Optional[DatabaseManager] = None):
+        self.logger = get_logger(__name__)
+        self.db_manager = db_manager or DatabaseManager()
+    
+    def load_daily_valuation_data(self, transformed_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Load transformed daily valuation metrics into database.
+        
+        Args:
+            transformed_data: Transformed data from DailyValuationTransformer
+            
+        Returns:
+            Dictionary with loading results and statistics
+        """
+        ticker = transformed_data.get('ticker')
+        self.logger.info(f"Loading daily valuation data for {ticker}")
+        
+        loading_results = {
+            'ticker': ticker,
+            'loading_timestamp': datetime.now(timezone.utc).isoformat(),
+            'records_processed': 0,
+            'records_inserted': 0,
+            'records_updated': 0,
+            'errors': []
+        }
+        
+        try:
+            daily_metrics = transformed_data.get('daily_metrics', [])
+            
+            if not daily_metrics:
+                self.logger.info(f"No daily valuation metrics to load for {ticker}")
+                return loading_results
+            
+            # Load in batch for efficiency
+            results = self._batch_load_daily_metrics(daily_metrics)
+            
+            loading_results.update({
+                'records_processed': len(daily_metrics),
+                'records_inserted': results['inserted'],
+                'records_updated': results['updated']
+            })
+            
+            self.logger.info(
+                f"Successfully loaded daily valuation data for {ticker}: "
+                f"{results['inserted']} inserted, {results['updated']} updated"
+            )
+            
+        except Exception as e:
+            error_msg = f"Failed to load daily valuation data for {ticker}: {e}"
+            self.logger.error(error_msg)
+            loading_results['errors'].append(error_msg)
+        
+        return loading_results
+    
+    def _batch_load_daily_metrics(self, daily_metrics: List[Dict[str, Any]]) -> Dict[str, int]:
+        """
+        Load daily metrics in batch using database manager.
+        
+        Returns:
+            Dictionary with insert/update counts
+        """
+        from ..data.models import DailyValuationMetrics
+        
+        inserted_count = 0
+        updated_count = 0
+        
+        with self.db_manager.get_session() as session:
+            for metric_data in daily_metrics:
+                try:
+                    # Check if record already exists
+                    existing = session.query(DailyValuationMetrics).filter(
+                        DailyValuationMetrics.instrument_id == metric_data['instrument_id'],
+                        DailyValuationMetrics.date == metric_data['date']
+                    ).first()
+                    
+                    if existing:
+                        # Update existing record
+                        for key, value in metric_data.items():
+                            if key not in ['instrument_id', 'date']:  # Don't update key fields
+                                setattr(existing, key, value)
+                        existing.updated_at = datetime.utcnow()
+                        updated_count += 1
+                    else:
+                        # Create new record
+                        new_metric = DailyValuationMetrics(**metric_data)
+                        session.add(new_metric)
+                        inserted_count += 1
+                    
+                    # Commit in batches for performance
+                    if (inserted_count + updated_count) % 1000 == 0:
+                        session.commit()
+                        
+                except Exception as e:
+                    self.logger.debug(f"Error loading daily metric: {e}")
+                    session.rollback()
+                    continue
+            
+            # Final commit
+            session.commit()
+        
+        return {'inserted': inserted_count, 'updated': updated_count}
+
+
+class DailyValuationETLOrchestrator:
+    """
+    Orchestrator for daily valuation metrics ETL process.
+    
+    Coordinates extract → transform → load pipeline for daily valuations.
+    """
+    
+    def __init__(self, db_manager: Optional[DatabaseManager] = None):
+        self.logger = get_logger(__name__)
+        self.db_manager = db_manager or DatabaseManager()
+        
+        # Initialize ETL components
+        from .extract import DailyValuationExtractor
+        from .transform import DailyValuationTransformer
+        
+        self.extractor = DailyValuationExtractor()
+        self.transformer = DailyValuationTransformer()
+        self.loader = DailyValuationLoader(db_manager)
+    
+    def run_daily_valuation_etl(
+        self,
+        ticker: str,
+        start_date: date,
+        end_date: Optional[date] = None
+    ) -> Dict[str, Any]:
+        """
+        Run complete daily valuation ETL pipeline for a ticker.
+        
+        Args:
+            ticker: Stock ticker symbol
+            start_date: Start date for valuation calculation
+            end_date: End date for valuation calculation
+            
+        Returns:
+            Dictionary with ETL results
+        """
+        self.logger.info(f"Starting daily valuation ETL for {ticker} from {start_date}")
+        
+        etl_results = {
+            'ticker': ticker,
+            'start_date': start_date,
+            'end_date': end_date,
+            'status': 'started',
+            'extraction_results': None,
+            'transformation_results': None,
+            'loading_results': None,
+            'error': None
+        }
+        
+        try:
+            # Extract
+            raw_data = self.extractor.extract_daily_valuation_data(ticker, start_date, end_date)
+            etl_results['extraction_results'] = {
+                'price_records': len(raw_data.get('price_data', [])),
+                'ttm_periods': len(raw_data.get('ttm_timeline', []))
+            }
+            
+            # Transform
+            transformed_data = self.transformer.transform_daily_valuation_data(raw_data)
+            etl_results['transformation_results'] = {
+                'daily_metrics_count': len(transformed_data.get('daily_metrics', []))
+            }
+            
+            # Load
+            loading_results = self.loader.load_daily_valuation_data(transformed_data)
+            etl_results['loading_results'] = loading_results
+            
+            # Determine overall status
+            if loading_results.get('errors'):
+                etl_results['status'] = 'completed_with_errors'
+            else:
+                etl_results['status'] = 'completed'
+            
+            self.logger.info(f"Daily valuation ETL completed for {ticker}")
+            
+        except Exception as e:
+            error_msg = f"Daily valuation ETL failed for {ticker}: {e}"
+            self.logger.error(error_msg)
+            etl_results['status'] = 'failed'
+            etl_results['error'] = error_msg
+        
+        return etl_results
+    
+    def run_incremental_valuation_etl(
+        self,
+        ticker: str,
+        start_date: date,
+        end_date: Optional[date] = None,
+        recalculate_affected: bool = True
+    ) -> Dict[str, Any]:
+        """
+        Run incremental daily valuation ETL for specific date ranges.
+        
+        This is more efficient than historical population as it only calculates
+        valuations for the specified date range instead of all historical data.
+        
+        Args:
+            ticker: Stock ticker symbol
+            start_date: Start date for incremental calculation
+            end_date: End date for incremental calculation (defaults to today)
+            recalculate_affected: If True, also recalculate dates where TTM may have changed
+            
+        Returns:
+            Dictionary with ETL results
+        """
+        if end_date is None:
+            end_date = date.today()
+            
+        self.logger.info(f"Starting incremental valuation ETL for {ticker} from {start_date} to {end_date}")
+        
+        etl_results = {
+            'ticker': ticker,
+            'start_date': start_date,
+            'end_date': end_date,
+            'status': 'started',
+            'incremental_mode': True,
+            'extraction_results': None,
+            'transformation_results': None,
+            'loading_results': None,
+            'error': None
+        }
+        
+        try:
+            # For incremental updates, we might need to extend the date range
+            # if new fundamental data affects historical TTM calculations
+            calculation_start_date = start_date
+            calculation_end_date = end_date
+            
+            if recalculate_affected:
+                # Check if we have new fundamental data that affects TTM calculations
+                affected_range = self._get_ttm_affected_date_range(ticker, start_date, end_date)
+                if affected_range:
+                    # Ensure affected dates are date objects for comparison
+                    affected_start = self._ensure_date_object(affected_range['start_date'])
+                    affected_end = self._ensure_date_object(affected_range['end_date'])
+                    
+                    calculation_start_date = min(start_date, affected_start)
+                    calculation_end_date = max(end_date, affected_end)
+                    
+                    self.logger.info(
+                        f"Extending calculation range due to TTM changes: "
+                        f"{calculation_start_date} to {calculation_end_date}"
+                    )
+            
+            # Run ETL for the determined date range
+            return self.run_daily_valuation_etl(ticker, calculation_start_date, calculation_end_date)
+            
+        except Exception as e:
+            error_msg = f"Incremental valuation ETL failed for {ticker}: {e}"
+            self.logger.error(error_msg)
+            etl_results['status'] = 'failed'
+            etl_results['error'] = error_msg
+            return etl_results
+    
+    def run_historical_population(self, ticker: str) -> Dict[str, Any]:
+        """
+        Run daily valuation ETL for all available historical data for a ticker.
+        
+        Finds the earliest date with both price and fundamental data.
+        """
+        self.logger.info(f"Starting historical daily valuation population for {ticker}")
+        
+        try:
+            # Get date range with available data
+            date_range = self._get_available_data_range(ticker)
+            
+            if not date_range:
+                self.logger.warning(f"No data available for {ticker}")
+                return {
+                    'ticker': ticker,
+                    'status': 'no_data',
+                    'error': 'No price or fundamental data found'
+                }
+            
+            start_date = date_range['start_date']
+            end_date = date_range['end_date']
+            
+            self.logger.info(
+                f"Running historical population for {ticker} from {start_date} to {end_date}"
+            )
+            
+            # Run ETL for full historical range
+            return self.run_daily_valuation_etl(ticker, start_date, end_date)
+            
+        except Exception as e:
+            error_msg = f"Historical population failed for {ticker}: {e}"
+            self.logger.error(error_msg)
+            return {
+                'ticker': ticker,
+                'status': 'failed',
+                'error': error_msg
+            }
+    
+    def _get_available_data_range(self, ticker: str) -> Optional[Dict[str, date]]:
+        """Get the date range where both price and fundamental data are available."""
+        with self.db_manager.get_session() as session:
+            # Get price data range
+            price_query = text("""
+            SELECT MIN(p.date) as min_date, MAX(p.date) as max_date
+            FROM instruments ins
+            JOIN prices p ON ins.id = p.instrument_id
+            WHERE ins.ticker_symbol = :ticker
+            """)
+            price_result = session.execute(price_query, {'ticker': ticker}).fetchone()
+            
+            # Get fundamental data range (from quarterly income statements)
+            fundamental_query = text("""
+            SELECT MIN(inc.period_end_date) as min_date, MAX(inc.period_end_date) as max_date
+            FROM instruments ins
+            JOIN income_statements inc ON ins.id = inc.instrument_id
+            WHERE ins.ticker_symbol = :ticker
+                AND inc.period_type = 'quarterly'
+                AND inc.total_revenue IS NOT NULL
+                AND inc.net_income IS NOT NULL
+            """)
+            fundamental_result = session.execute(fundamental_query, {'ticker': ticker}).fetchone()
+            
+            if not price_result or not fundamental_result:
+                return None
+            
+            price_min, price_max = price_result[0], price_result[1]
+            fund_min, fund_max = fundamental_result[0], fundamental_result[1]
+            
+            if not all([price_min, price_max, fund_min, fund_max]):
+                return None
+            
+            # Use the latest start date (when both types become available)
+            # and the earliest end date (when either type ends)
+            start_date = max(price_min, fund_min)
+            end_date = min(price_max, fund_max)
+            
+            if start_date > end_date:
+                return None
+            
+            return {
+                'start_date': start_date,
+                'end_date': end_date
+            }
+    
+    def _get_ttm_affected_date_range(
+        self, 
+        ticker: str, 
+        new_data_start: date, 
+        new_data_end: date
+    ) -> Optional[Dict[str, date]]:
+        """
+        Determine if new fundamental data affects existing TTM calculations.
+        
+        When new quarterly data is added, it can change TTM calculations going back
+        up to 4 quarters, affecting existing daily valuations.
+        
+        Args:
+            ticker: Stock ticker symbol
+            new_data_start: Start date of newly added data
+            new_data_end: End date of newly added data
+            
+        Returns:
+            Dictionary with affected date range or None if no impact
+        """
+        try:
+            with self.db_manager.get_session() as session:
+                # Check if any new quarterly income statements were added in this date range
+                new_quarters_query = text("""
+                SELECT MIN(inc.period_end_date) as earliest_new_quarter
+                FROM instruments ins
+                JOIN income_statements inc ON ins.id = inc.instrument_id
+                WHERE ins.ticker_symbol = :ticker
+                    AND inc.period_type = 'quarterly'
+                    AND inc.period_end_date >= :start_date
+                    AND inc.period_end_date <= :end_date
+                    AND inc.total_revenue IS NOT NULL
+                    AND inc.net_income IS NOT NULL
+                """)
+                
+                result = session.execute(
+                    new_quarters_query, 
+                    {'ticker': ticker, 'start_date': new_data_start, 'end_date': new_data_end}
+                ).fetchone()
+                
+                if not result or not result[0]:
+                    # No new quarterly data, no TTM impact
+                    return None
+                
+                earliest_new_quarter = result[0]
+                
+                # New quarterly data affects TTM calculations from that quarter forward
+                # But we want to be conservative and recalculate from the start of that quarter
+                affected_start = earliest_new_quarter
+                
+                # Affected range goes to the end of our price data
+                price_end_query = text("""
+                SELECT MAX(p.date) as max_price_date
+                FROM instruments ins
+                JOIN prices p ON ins.id = p.instrument_id
+                WHERE ins.ticker_symbol = :ticker
+                """)
+                
+                price_result = session.execute(price_end_query, {'ticker': ticker}).fetchone()
+                affected_end = price_result[0] if price_result and price_result[0] else new_data_end
+                
+                self.logger.info(
+                    f"New quarterly data detected for {ticker}: affects valuations from {affected_start}"
+                )
+                
+                return {
+                    'start_date': affected_start,
+                    'end_date': affected_end
+                }
+                
+        except Exception as e:
+            self.logger.warning(f"Error determining TTM affected range for {ticker}: {e}")
+            return None
+    
+    def _ensure_date_object(self, date_value: Union[str, date, datetime]) -> date:
+        """
+        Ensure a value is converted to a date object.
+        
+        Args:
+            date_value: Date value that might be a string, datetime, or date
+            
+        Returns:
+            date object
+        """
+        if isinstance(date_value, date):
+            return date_value
+        elif isinstance(date_value, datetime):
+            return date_value.date()
+        elif isinstance(date_value, str):
+            try:
+                # Try parsing ISO format date string
+                return datetime.fromisoformat(date_value.replace('Z', '+00:00')).date()
+            except ValueError:
+                try:
+                    # Try standard date format
+                    return datetime.strptime(date_value, '%Y-%m-%d').date()
+                except ValueError:
+                    raise ValueError(f"Cannot convert date string to date object: {date_value}")
+        else:
+            raise TypeError(f"Cannot convert {type(date_value)} to date object: {date_value}")

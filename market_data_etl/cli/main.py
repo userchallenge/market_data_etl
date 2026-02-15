@@ -32,7 +32,10 @@ from .commands import (
     alignment_pairs_command,
     rebuild_aligned_data_command,
     query_aligned_data_command,
-    aligned_data_info_command
+    aligned_data_info_command,
+    calculate_daily_valuations_command,
+    populate_daily_valuations_command,
+    valuation_info_command
 )
 
 
@@ -68,6 +71,9 @@ Examples:
   %(prog)s rebuild-aligned-data --from 2024-01-01 --to 2024-12-31
   %(prog)s query-aligned-data --ticker AAPL --from 2024-01-01 --output detailed
   %(prog)s query-aligned-data --ticker ESSITY-B.ST --indicators inflation_ea
+  %(prog)s populate-daily-valuations --ticker AAPL
+  %(prog)s calculate-daily-valuations --ticker AAPL --from 2024-01-01 --to 2024-12-31
+  %(prog)s valuation-info --ticker AAPL
   %(prog)s aligned-data-info
   
 Environment Variables:
@@ -481,6 +487,50 @@ Environment Variables:
         help='Show aligned data system information and coverage statistics'
     )
     
+    # calculate-daily-valuations command
+    calculate_valuations_parser = subparsers.add_parser(
+        'calculate-daily-valuations',
+        help='Calculate daily valuation metrics (P/E, P/S ratios) for a date range'
+    )
+    calculate_valuations_parser.add_argument(
+        '--ticker', 
+        required=True,
+        help='Stock ticker symbol'
+    )
+    calculate_valuations_parser.add_argument(
+        '--from',
+        dest='from_date',
+        required=True,
+        help='Start date (YYYY-MM-DD format)'
+    )
+    calculate_valuations_parser.add_argument(
+        '--to',
+        dest='to_date',
+        help='End date (YYYY-MM-DD format, defaults to today)'
+    )
+    
+    # populate-daily-valuations command
+    populate_valuations_parser = subparsers.add_parser(
+        'populate-daily-valuations',
+        help='Populate all historical daily valuation metrics for a ticker'
+    )
+    populate_valuations_parser.add_argument(
+        '--ticker',
+        required=True,
+        help='Stock ticker symbol'
+    )
+    
+    # valuation-info command
+    valuation_info_parser = subparsers.add_parser(
+        'valuation-info',
+        help='Show daily valuation metrics information for a ticker'
+    )
+    valuation_info_parser.add_argument(
+        '--ticker',
+        required=True,
+        help='Stock ticker symbol'
+    )
+    
     return parser
 
 
@@ -603,6 +653,20 @@ def main() -> NoReturn:
             )
         elif args.command == 'aligned-data-info':
             exit_code = aligned_data_info_command()
+        elif args.command == 'calculate-daily-valuations':
+            exit_code = calculate_daily_valuations_command(
+                ticker=args.ticker,
+                from_date=args.from_date,
+                to_date=args.to_date
+            )
+        elif args.command == 'populate-daily-valuations':
+            exit_code = populate_daily_valuations_command(
+                ticker=args.ticker
+            )
+        elif args.command == 'valuation-info':
+            exit_code = valuation_info_command(
+                ticker=args.ticker
+            )
         else:
             from ..utils.logging import get_logger
             logger = get_logger(__name__)

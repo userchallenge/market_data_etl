@@ -5,10 +5,11 @@ This module is responsible ONLY for extracting raw data from external sources
 like Yahoo Finance. No transformation or loading logic should be here.
 """
 
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from datetime import date, datetime, timedelta, timezone
 import yfinance as yf
 import pandas as pd
+from sqlalchemy import text
 
 from ..utils.logging import get_logger
 from ..utils.exceptions import YahooFinanceError
@@ -380,3 +381,158 @@ class EconomicDataExtractor:
         except Exception as e:
             self.logger.error(f"Failed to extract FRED data for {series_id}: {e}")
             raise e
+
+
+class DailyValuationExtractor:
+    """
+    Pure extractor for daily valuation metrics data.
+    
+    Responsibility: EXTRACT ONLY
+    - Extract price data and TTM timeline data needed for daily valuation calculations
+    - Handle retry logic and errors
+    - Return raw data as-is (no transformation)
+    """
+    
+    def __init__(self):
+        from ..utils.ttm_calculator import TTMCalculator
+        from ..database.manager import DatabaseManager
+        self.ttm_calculator = TTMCalculator()
+        self.db_manager = DatabaseManager()
+        self.logger = get_logger(__name__)
+    
+    def extract_daily_valuation_data(
+        self, 
+        ticker: str,
+        start_date: date,
+        end_date: Optional[date] = None
+    ) -> Dict[str, Any]:
+        """
+        Extract all data needed for daily valuation calculations.
+        
+        Args:
+            ticker: Stock ticker symbol
+            start_date: Start date for valuation calculation
+            end_date: End date for valuation calculation (defaults to today)
+            
+        Returns:
+            Dictionary with raw data needed for daily valuations:
+            {
+                'ticker': str,
+                'start_date': date,
+                'end_date': date,
+                'extraction_timestamp': str,
+                'price_data': List[Dict],  # Daily price data
+                'ttm_timeline': List[Dict],  # TTM metrics timeline
+                'instrument_info': Dict  # Basic instrument information
+            }
+            
+        Raises:
+            YahooFinanceError: If extraction fails
+        """
+        if end_date is None:
+            end_date = date.today()
+        
+        self.logger.info(
+            f"Extracting daily valuation data for {ticker} from {start_date} to {end_date}"
+        )
+        
+        try:
+            # Extract price data for the date range
+            price_data = self._extract_price_data(ticker, start_date, end_date)
+            
+            # Extract TTM timeline (all available TTM calculations)
+            ttm_timeline = self._extract_ttm_timeline(ticker)
+            
+            # Extract basic instrument information
+            instrument_info = self._extract_instrument_info(ticker)
+            
+            extraction_result = {
+                'ticker': ticker,
+                'start_date': start_date,
+                'end_date': end_date,
+                'extraction_timestamp': datetime.now(timezone.utc).isoformat(),
+                'price_data': price_data,
+                'ttm_timeline': ttm_timeline,
+                'instrument_info': instrument_info
+            }
+            
+            self.logger.info(
+                f"Successfully extracted valuation data for {ticker}: "
+                f"{len(price_data)} price records, {len(ttm_timeline)} TTM periods"
+            )
+            
+            return extraction_result
+            
+        except Exception as e:
+            self.logger.error(f"Failed to extract daily valuation data for {ticker}: {e}")
+            raise YahooFinanceError(f"Daily valuation data extraction failed for {ticker}: {e}")
+    
+    def _extract_price_data(self, ticker: str, start_date: date, end_date: date) -> List[Dict[str, Any]]:
+        """Extract daily price data from database."""
+        with self.db_manager.get_session() as session:
+            query = text("""
+            SELECT p.date, p.close
+            FROM instruments ins
+            JOIN prices p ON ins.id = p.instrument_id
+            WHERE ins.ticker_symbol = :ticker
+                AND p.date >= :start_date
+                AND p.date <= :end_date
+            ORDER BY p.date ASC
+            """)
+            
+            result = session.execute(query, {
+                'ticker': ticker, 
+                'start_date': start_date, 
+                'end_date': end_date
+            }).fetchall()
+            
+            return [
+                {
+                    'date': row[0],
+                    'close_price': row[1]
+                }
+                for row in result
+            ]
+    
+    def _extract_ttm_timeline(self, ticker: str) -> List[Dict[str, Any]]:
+        """Extract TTM metrics timeline using TTMCalculator."""
+        try:
+            ttm_timeline = self.ttm_calculator.get_historical_ttm_timeline(ticker)
+            
+            # Convert dates to strings for JSON serialization
+            for ttm_record in ttm_timeline:
+                if 'ttm_as_of_date' in ttm_record and isinstance(ttm_record['ttm_as_of_date'], date):
+                    ttm_record['ttm_as_of_date'] = ttm_record['ttm_as_of_date'].isoformat()
+                
+                # Handle source periods date conversion
+                if 'source_periods' in ttm_record:
+                    for period in ttm_record['source_periods']:
+                        if 'period_end_date' in period and isinstance(period['period_end_date'], date):
+                            period['period_end_date'] = period['period_end_date'].isoformat()
+            
+            return ttm_timeline
+            
+        except Exception as e:
+            self.logger.error(f"Failed to extract TTM timeline for {ticker}: {e}")
+            return []
+    
+    def _extract_instrument_info(self, ticker: str) -> Dict[str, Any]:
+        """Extract basic instrument information from database."""
+        with self.db_manager.get_session() as session:
+            query = text("""
+            SELECT id, ticker_symbol, instrument_type
+            FROM instruments
+            WHERE ticker_symbol = :ticker
+            LIMIT 1
+            """)
+            
+            result = session.execute(query, {'ticker': ticker}).fetchone()
+            
+            if result:
+                return {
+                    'instrument_id': result[0],
+                    'ticker_symbol': result[1],
+                    'instrument_type': result[2]
+                }
+            else:
+                raise YahooFinanceError(f"Instrument not found in database: {ticker}")
